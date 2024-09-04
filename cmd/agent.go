@@ -1,8 +1,13 @@
 package main
 
-import "github.com/bamboo-firewall/agent/dataplane/linux"
+import (
+	"log/slog"
+	"os"
+
+	"github.com/bamboo-firewall/agent/internal/daemon"
+)
 
 func main() {
-	internalDataplane := linux.NewInternalDataplane()
-	internalDataplane.Start()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	daemon.Run()
 }
