@@ -7,6 +7,6 @@ type apiServer struct {
 	count  int
 }
 
-func NewAPIServer() *apiServer {
-	return &apiServer{client: http.NewClient("")}
+func NewAPIServer(address string) *apiServer {
+	return &apiServer{client: http.NewClient(address)}
 }

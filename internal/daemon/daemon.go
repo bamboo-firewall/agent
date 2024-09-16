@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -9,9 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bamboo-firewall/agent/config"
 	"github.com/bamboo-firewall/agent/internal/dataplane/linux"
 	"github.com/bamboo-firewall/agent/pkg/apiserver/client"
+	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
+	"github.com/bamboo-firewall/agent/pkg/model"
 	"github.com/bamboo-firewall/agent/pkg/utils"
+)
+
+const (
+	defaultDatastoreRefreshInterval = 5 * time.Second
 )
 
 type dataplaneDriver interface {
@@ -21,23 +29,41 @@ type dataplaneDriver interface {
 }
 
 type apiServer interface {
-	FetchNewPolicy() (interface{}, error)
+	FetchPolicies(ctx context.Context, hostName string) (*dto.FetchPoliciesOutput, error)
 }
 
 type dataplaneConnector struct {
-	dataplane     dataplaneDriver
-	apiServer     apiServer
-	ctx           context.Context
-	ctxCancelFunc context.CancelFunc
+	dataplane                dataplaneDriver
+	apiServer                apiServer
+	hostName                 string
+	dataStoreRefreshInterval time.Duration
+	ctx                      context.Context
+	ctxCancelFunc            context.CancelFunc
 }
 
-func Run() {
+func Run(conf config.Config) {
 	ctx, cancel := context.WithCancel(context.Background())
+	dataplane, err := linux.NewInternalDataplane(ctx, conf)
+	if err != nil {
+		log.Fatal(err)
+	}
+	as := client.NewAPIServer(conf.APIServerAddress)
+	if err = as.Ping(ctx); err != nil {
+		log.Fatal(err)
+	}
+	var datastoreRefreshInterval time.Duration
+	if conf.DatastoreRefreshInterval <= 0 {
+		datastoreRefreshInterval = defaultDatastoreRefreshInterval
+	} else {
+		datastoreRefreshInterval = conf.DatastoreRefreshInterval
+	}
 	connector := &dataplaneConnector{
-		dataplane:     linux.NewInternalDataplane(ctx),
-		apiServer:     client.NewAPIServer(),
-		ctx:           ctx,
-		ctxCancelFunc: cancel,
+		dataplane:                dataplane,
+		apiServer:                as,
+		hostName:                 conf.HostName,
+		dataStoreRefreshInterval: datastoreRefreshInterval,
+		ctx:                      ctx,
+		ctxCancelFunc:            cancel,
 	}
 
 	go interruptHandle(connector)
@@ -72,31 +98,110 @@ func interruptHandle(dc *dataplaneConnector) {
 }
 
 func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
-	intervalTime := 5 * time.Second
-	timer := time.NewTimer(intervalTime)
+	timer := time.NewTimer(dc.dataStoreRefreshInterval)
 	for {
 		var (
-			msg interface{}
+			msg *dto.FetchPoliciesOutput
 			err error
 		)
-		utils.ResetTimer(timer, intervalTime)
+		utils.ResetTimer(timer, dc.dataStoreRefreshInterval)
 		select {
 		case <-timer.C:
-			msg, err = dc.apiServer.FetchNewPolicy()
+			msg, err = dc.apiServer.FetchPolicies(dc.ctx, dc.hostName)
 			if err != nil {
 				// ToDo: check connection or handle error need to retry or not
-				slog.Info("fetch new policy error:", err)
+				slog.Error("fetch new policy error:", err)
 				continue
 			}
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
-		if msg == nil {
+		policy := convertAPIToAgentModel(msg)
+		if policy == nil {
 			continue
 		}
-		if err = dc.dataplane.SendMessage(msg); err != nil {
+		slog.Info("policy", "policy", policy)
+
+		// convert rule here
+		if err = dc.dataplane.SendMessage(policy); err != nil {
 			slog.Info("send message error:", err)
 		}
+	}
+}
+
+func convertAPIToAgentModel(agentDTO *dto.FetchPoliciesOutput) *model.Agent {
+	if agentDTO == nil {
+		return nil
+	}
+	if !agentDTO.IsNew {
+		return nil
+	}
+	agentPolicy := new(model.AgentPolicy)
+	for _, policy := range agentDTO.GNPs {
+		inboundRules := make([]*model.Rule, 0)
+		outboundRules := make([]*model.Rule, 0)
+		for _, rule := range policy.Spec.Ingress {
+			inboundRules = append(inboundRules, &model.Rule{
+				Action:    rule.Action,
+				IPVersion: 4,
+				//Metadata:                rule.Metadata,
+				Protocol:                rule.Protocol,
+				SrcNets:                 rule.Source.Nets,
+				SrcPorts:                rule.Source.Ports,
+				SrcNamedPortIpSetIDs:    nil,
+				DstNets:                 rule.Destination.Nets,
+				DstPorts:                rule.Destination.Ports,
+				DstNamedPortIpSetIDs:    nil,
+				NotProtocol:             "",
+				NotSrcNets:              nil,
+				NotSrcPorts:             nil,
+				NotSrcNamedPortIpSetIDs: nil,
+				NotDstNets:              nil,
+				NotDstPorts:             nil,
+				NotDstNamedPortIpSetIDs: nil,
+			})
+		}
+
+		for _, rule := range policy.Spec.Egress {
+			outboundRules = append(outboundRules, &model.Rule{
+				Action:    rule.Action,
+				IPVersion: 4,
+				//Metadata:                rule.Metadata,
+				Protocol:                rule.Protocol,
+				SrcNets:                 rule.Source.Nets,
+				SrcPorts:                rule.Source.Ports,
+				SrcNamedPortIpSetIDs:    nil,
+				DstNets:                 rule.Destination.Nets,
+				DstPorts:                rule.Destination.Ports,
+				DstNamedPortIpSetIDs:    nil,
+				NotProtocol:             "",
+				NotSrcNets:              nil,
+				NotSrcPorts:             nil,
+				NotSrcNamedPortIpSetIDs: nil,
+				NotDstNets:              nil,
+				NotDstPorts:             nil,
+				NotDstNamedPortIpSetIDs: nil,
+			})
+		}
+		agentPolicy.Policies = append(agentPolicy.Policies, &model.Policy{
+			ID:            policy.ID,
+			InboundRules:  inboundRules,
+			OutboundRules: outboundRules,
+		})
+	}
+	agentIPSet := new(model.AgentIPSet)
+	for _, ipset := range agentDTO.GNSs {
+		agentIPSet.IPSets = append(agentIPSet.IPSets, &model.IPSet{
+			ID:        ipset.ID,
+			Version:   ipset.Version,
+			Name:      ipset.Metadata.Name,
+			IPVersion: ipset.Metadata.IPVersion,
+			Members:   ipset.Spec.Nets,
+		})
+	}
+	return &model.Agent{
+		Policy: agentPolicy,
+		IPSet:  agentIPSet,
 	}
 }
