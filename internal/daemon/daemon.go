@@ -110,21 +110,20 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 			msg, err = dc.apiServer.FetchPolicies(dc.ctx, dc.hostName)
 			if err != nil {
 				// ToDo: check connection or handle error need to retry or not
-				slog.Error("fetch new policy error:", err)
+				slog.Error("fetch policies error:", err)
 				continue
 			}
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
-		policy := convertAPIToAgentModel(msg)
-		if policy == nil {
+		agent := convertAPIToAgentModel(msg)
+		if agent == nil {
 			continue
 		}
-		slog.Info("policy", "policy", policy)
 
 		// convert rule here
-		if err = dc.dataplane.SendMessage(policy); err != nil {
+		if err = dc.dataplane.SendMessage(agent); err != nil {
 			slog.Info("send message error:", err)
 		}
 	}

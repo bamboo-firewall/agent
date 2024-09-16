@@ -140,6 +140,7 @@ func (t *Table) SetDefaultRuleOfDefaultChain(chainName string, rule generictable
 
 // UpdateChains update rules of our chain
 func (t *Table) UpdateChains(chains []*generictables.Chain) {
+	t.chainNameToChain = make(map[string]*generictables.Chain)
 	for _, chain := range chains {
 		t.UpdateChain(chain)
 	}
@@ -184,13 +185,14 @@ func (t *Table) apply() error {
 	buf.StartTransaction(t.name)
 
 	updatedChains := make(map[string]struct{})
+	referenceChains := make(map[string]struct{})
 	// First: write chain
 	for chainName, chain := range t.chainNameToChain {
 		currentHashes := t.renderer.RuleHashes(chain)
 		previousHashes := t.chainHashesFromDataplane[chainName]
+		referenceChains[chainName] = struct{}{}
 
-		if len(previousHashes) > 0 && reflect.DeepEqual(previousHashes, currentHashes) {
-			slog.Info("Skipping previously applied chain", "chain", chainName)
+		if reflect.DeepEqual(previousHashes, currentHashes) {
 			updatedChains[chainName] = struct{}{}
 			continue
 		}
@@ -215,18 +217,7 @@ func (t *Table) apply() error {
 		}
 		currentHashes := t.renderer.RuleHashes(chain)
 		for i := 0; i < len(currentHashes) || i < len(previousHashes); i++ {
-			var line string
-			if i < len(currentHashes) && i < len(previousHashes) {
-				if currentHashes[i] == previousHashes[i] {
-					continue
-				}
-				line = t.renderer.RenderReplace(&chain.Rules[i], chainName, i+1, currentHashes[i])
-			} else if i < len(previousHashes) {
-				line = t.renderer.RenderDeleteAtIndex(chainName, len(currentHashes)+1)
-			} else {
-				line = t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i])
-			}
-			buf.WriteRule(line)
+			buf.WriteRule(t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i]))
 		}
 	}
 	// Step2: Write our rule to our default chain
@@ -246,20 +237,7 @@ func (t *Table) apply() error {
 		}
 		currentHashes := t.renderer.RuleHashes(chain)
 		for i := 0; i < len(currentHashes) || i < len(previousHashes); i++ {
-			var line string
-			if i < len(currentHashes) && i < len(previousHashes) {
-				if currentHashes[i] == previousHashes[i] {
-					continue
-				}
-				//line = t.renderer.RenderDeleteAtIndex(chainName, i+1)
-				//line = t.renderer.RenderInsertAtIndex(&chain.Rules[i], chainName, i+1, currentHashes[i])
-				line = t.renderer.RenderReplace(&chain.Rules[i], chainName, i+1, currentHashes[i])
-			} else if i < len(previousHashes) {
-				line = t.renderer.RenderDeleteAtIndex(chainName, i+1)
-			} else {
-				line = t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i])
-			}
-			buf.WriteRule(line)
+			buf.WriteRule(t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i]))
 		}
 	}
 	// Step3 : Write our rule of default chain
@@ -290,6 +268,17 @@ func (t *Table) apply() error {
 				}
 			}
 		}
+	}
+	// Step3: Delete all our unreferenced chain
+	for chainName := range t.chainHashesFromDataplane {
+		if _, ok := referenceChains[chainName]; ok {
+			continue
+		}
+		if _, ok := t.defaultOurRuleOfDefaultChain[chainName]; ok {
+			continue
+		}
+		buf.WriteChain(chainName)
+		buf.WriteRule(fmt.Sprintf("--delete-chain %s", chainName))
 	}
 
 	buf.EndTransaction()
@@ -411,6 +400,9 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		if captures != nil {
 			chainName := string(captures[1])
 			hashes[chainName] = []string{}
+			if t.ourChainsRegexp.MatchString(chainName) {
+				chainHasOurRule[chainName] = struct{}{}
+			}
 			continue
 		}
 
@@ -426,7 +418,6 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		// Find our rules
 		captures = t.hashCommentRegexp.FindSubmatch(line)
 		if captures != nil {
-			chainHasOurRule[chainName] = struct{}{}
 			hash = string(captures[1])
 		}
 		hashes[chainName] = append(hashes[chainName], hash)
@@ -435,6 +426,7 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		if !t.ourChainsRegexp.MatchString(chainName) {
 			fullRule := "-"
 			if captures = t.hashCommentRegexp.FindSubmatch(line); captures != nil {
+				chainHasOurRule[chainName] = struct{}{}
 				fullRule = string(line)
 			}
 			rules[chainName] = append(rules[chainName], fullRule)
