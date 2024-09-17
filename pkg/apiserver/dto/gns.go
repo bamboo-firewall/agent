@@ -9,7 +9,7 @@ type GlobalNetworkSet struct {
 
 type GlobalNetworkSetMetadata struct {
 	Name      string `json:"name"`
-	IPVersion int    `json:"ip_version"`
+	IPVersion int    `json:"ipVersion"`
 }
 
 type GlobalNetworkSetSpec struct {

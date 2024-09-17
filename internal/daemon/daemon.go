@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -141,47 +142,11 @@ func convertAPIToAgentModel(agentDTO *dto.FetchPoliciesOutput) *model.Agent {
 		inboundRules := make([]*model.Rule, 0)
 		outboundRules := make([]*model.Rule, 0)
 		for _, rule := range policy.Spec.Ingress {
-			inboundRules = append(inboundRules, &model.Rule{
-				Action:    rule.Action,
-				IPVersion: 4,
-				//Metadata:                rule.Metadata,
-				Protocol:                rule.Protocol,
-				SrcNets:                 rule.Source.Nets,
-				SrcPorts:                rule.Source.Ports,
-				SrcNamedPortIpSetIDs:    nil,
-				DstNets:                 rule.Destination.Nets,
-				DstPorts:                rule.Destination.Ports,
-				DstNamedPortIpSetIDs:    nil,
-				NotProtocol:             "",
-				NotSrcNets:              nil,
-				NotSrcPorts:             nil,
-				NotSrcNamedPortIpSetIDs: nil,
-				NotDstNets:              nil,
-				NotDstPorts:             nil,
-				NotDstNamedPortIpSetIDs: nil,
-			})
+			inboundRules = append(inboundRules, convertAPIToRuleModel(rule))
 		}
 
 		for _, rule := range policy.Spec.Egress {
-			outboundRules = append(outboundRules, &model.Rule{
-				Action:    rule.Action,
-				IPVersion: 4,
-				//Metadata:                rule.Metadata,
-				Protocol:                rule.Protocol,
-				SrcNets:                 rule.Source.Nets,
-				SrcPorts:                rule.Source.Ports,
-				SrcNamedPortIpSetIDs:    nil,
-				DstNets:                 rule.Destination.Nets,
-				DstPorts:                rule.Destination.Ports,
-				DstNamedPortIpSetIDs:    nil,
-				NotProtocol:             "",
-				NotSrcNets:              nil,
-				NotSrcPorts:             nil,
-				NotSrcNamedPortIpSetIDs: nil,
-				NotDstNets:              nil,
-				NotDstPorts:             nil,
-				NotDstNamedPortIpSetIDs: nil,
-			})
+			outboundRules = append(outboundRules, convertAPIToRuleModel(rule))
 		}
 		agentPolicy.Policies = append(agentPolicy.Policies, &model.Policy{
 			ID:            policy.ID,
@@ -203,4 +168,37 @@ func convertAPIToAgentModel(agentDTO *dto.FetchPoliciesOutput) *model.Agent {
 		Policy: agentPolicy,
 		IPSet:  agentIPSet,
 	}
+}
+
+func convertAPIToRuleModel(ruleDTO *dto.Rule) *model.Rule {
+	if ruleDTO == nil {
+		return nil
+	}
+	return &model.Rule{
+		Action:    ruleDTO.Action,
+		IPVersion: 4,
+		//Metadata:                rule.Metadata,
+		Protocol:                ruleDTO.Protocol,
+		SrcNets:                 ruleDTO.Source.Nets,
+		SrcPorts:                convertPorts(ruleDTO.Source.Ports),
+		SrcNamedPortIpSetIDs:    nil,
+		DstNets:                 ruleDTO.Destination.Nets,
+		DstPorts:                convertPorts(ruleDTO.Destination.Ports),
+		DstNamedPortIpSetIDs:    nil,
+		NotProtocol:             ruleDTO.NotProtocol,
+		NotSrcNets:              ruleDTO.Source.NotNets,
+		NotSrcPorts:             convertPorts(ruleDTO.Source.NotPorts),
+		NotSrcNamedPortIpSetIDs: nil,
+		NotDstNets:              ruleDTO.Destination.NotNets,
+		NotDstPorts:             convertPorts(ruleDTO.Destination.NotPorts),
+		NotDstNamedPortIpSetIDs: nil,
+	}
+}
+
+func convertPorts(ports []interface{}) []string {
+	var portStrings []string
+	for _, port := range ports {
+		portStrings = append(portStrings, fmt.Sprintf("%x", port))
+	}
+	return portStrings
 }

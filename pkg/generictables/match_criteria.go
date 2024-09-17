@@ -3,6 +3,7 @@ package generictables
 type MatchCriteria interface {
 	Render() string
 	String() string
+	Copy() MatchCriteria
 	ConntrackState(stateNames string) MatchCriteria
 	NotConntrackState(stateNames string) MatchCriteria
 	Protocol(protocol string) MatchCriteria
@@ -17,4 +18,8 @@ type MatchCriteria interface {
 	NotSourceIPSet(name string) MatchCriteria
 	DestIPSet(name string) MatchCriteria
 	NotDestIPSet(name string) MatchCriteria
+	SourcePorts(ports []string) MatchCriteria
+	NotSourcePorts(ports []string) MatchCriteria
+	DestPorts(ports []string) MatchCriteria
+	NotDestPorts(ports []string) MatchCriteria
 }

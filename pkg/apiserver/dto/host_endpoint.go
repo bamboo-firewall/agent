@@ -6,8 +6,8 @@ type HostEndpoint struct {
 }
 
 type FetchPoliciesOutput struct {
-	IsNew        bool                   `json:"is_new"`
-	HostEndpoint *HostEndpoint          `json:"host_endpoint"`
-	GNPs         []*GlobalNetworkPolicy `json:"global_network_policies"`
-	GNSs         []*GlobalNetworkSet    `json:"global_network_sets"`
+	IsNew        bool                   `json:"isNew"`
+	HostEndpoint *HostEndpoint          `json:"hostEndpoint"`
+	GNPs         []*GlobalNetworkPolicy `json:"globalNetworkPolicies"`
+	GNSs         []*GlobalNetworkSet    `json:"globalNetworkSets"`
 }

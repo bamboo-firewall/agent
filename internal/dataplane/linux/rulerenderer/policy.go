@@ -2,6 +2,7 @@ package rulerenderer
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/bamboo-firewall/agent/pkg/generictables"
 	"github.com/bamboo-firewall/agent/pkg/model"
@@ -18,7 +19,7 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(agentPolicy *model.AgentP
 			chainName := generictables.OurInputChainPrefix + fmt.Sprint(i) // using name?
 			inbound := generictables.Chain{
 				Name:  chainName,
-				Rules: r.rulesToIptablesRules(policy.InboundRules, ipVersion),
+				Rules: r.rulesToTablesRules(policy.InboundRules, ipVersion),
 			}
 			chains = append(chains, &inbound)
 			rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
@@ -32,7 +33,7 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(agentPolicy *model.AgentP
 			chainName := generictables.OurOutputChainPrefix + fmt.Sprint(i)
 			outbound := generictables.Chain{
 				Name:  chainName,
-				Rules: r.rulesToIptablesRules(policy.OutboundRules, ipVersion),
+				Rules: r.rulesToTablesRules(policy.OutboundRules, ipVersion),
 			}
 			chains = append(chains, &outbound)
 			rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
@@ -90,10 +91,10 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(agentPolicy *model.AgentP
 	return chains
 }
 
-func (r *DefaultRuleRenderer) rulesToIptablesRules(rules []*model.Rule, ipVersion int, chainComments ...string) []generictables.Rule {
+func (r *DefaultRuleRenderer) rulesToTablesRules(rules []*model.Rule, ipVersion int, chainComments ...string) []generictables.Rule {
 	var iptablesRules []generictables.Rule
 	for _, rule := range rules {
-		iptablesRules = append(iptablesRules, r.ruleToIptablesRules(rule, ipVersion)...)
+		iptablesRules = append(iptablesRules, r.ruleToTablesRules(rule, ipVersion)...)
 	}
 
 	if len(chainComments) > 0 {
@@ -105,7 +106,7 @@ func (r *DefaultRuleRenderer) rulesToIptablesRules(rules []*model.Rule, ipVersio
 	return iptablesRules
 }
 
-func (r *DefaultRuleRenderer) ruleToIptablesRules(rule *model.Rule, ipVersion int) []generictables.Rule {
+func (r *DefaultRuleRenderer) ruleToTablesRules(rule *model.Rule, ipVersion int) []generictables.Rule {
 	if rule.IPVersion != ipVersion {
 		return nil
 	}
@@ -114,30 +115,168 @@ func (r *DefaultRuleRenderer) ruleToIptablesRules(rule *model.Rule, ipVersion in
 	if rule.Protocol != "" {
 		match = match.Protocol(rule.Protocol)
 	}
-
-	for _, set := range rule.SrcNamedPortIpSetIDs {
-		match = match.SourceIPSet(set)
-	}
-	for _, set := range rule.DstNamedPortIpSetIDs {
-		match = match.DestIPSet(set)
-	}
-
 	if rule.NotProtocol != "" {
 		match = match.NotProtocol(rule.NotProtocol)
 	}
 
-	for _, set := range rule.NotSrcNamedPortIpSetIDs {
-		match = match.NotSourceIPSet(set)
+	var (
+		srcPorts        [][]string
+		dstPorts        [][]string
+		isSrcPortNative bool
+		isDstPortNative bool
+	)
+	if len(rule.SrcPorts) > 0 {
+		srcPorts = splitPorts(rule.SrcPorts)
+		isSrcPortNative = true
+	} else {
+		srcPorts = splitPorts(rule.NotSrcPorts)
+		isSrcPortNative = false
 	}
-	for _, set := range rule.NotDstNamedPortIpSetIDs {
-		match = match.NotDestIPSet(set)
+	if len(rule.DstPorts) > 0 {
+		dstPorts = splitPorts(rule.DstPorts)
+		isDstPortNative = true
+	} else {
+		dstPorts = splitPorts(rule.NotDstPorts)
+		isDstPortNative = false
+	}
+	for i := 0; i < len(srcPorts) || i < len(dstPorts); i++ {
+		if i < len(srcPorts) && i < len(dstPorts) {
+			if isSrcPortNative {
+				match = match.SourcePorts(srcPorts[i])
+			} else {
+				match = match.NotSourcePorts(srcPorts[i])
+			}
+			if isDstPortNative {
+				match = match.DestPorts(dstPorts[i])
+			} else {
+				match = match.NotDestPorts(dstPorts[i])
+			}
+		} else if i < len(dstPorts) {
+			if isDstPortNative {
+				match = match.DestPorts(dstPorts[i])
+			} else {
+				match = match.NotDestPorts(dstPorts[i])
+			}
+		} else {
+			if isSrcPortNative {
+				match = match.SourcePorts(srcPorts[i])
+			} else {
+				match = match.NotSourcePorts(srcPorts[i])
+			}
+		}
+	}
+
+	var (
+		srcIPSets  []string
+		dstIPSets  []string
+		isSrcIPSet bool
+		isDstIPSet bool
+	)
+	if len(rule.SrcNamedPortIpSetIDs) > 0 {
+		srcIPSets = rule.SrcNamedPortIpSetIDs
+		isSrcIPSet = true
+	} else {
+		srcIPSets = rule.NotSrcNamedPortIpSetIDs
+		isSrcIPSet = false
+	}
+	if len(rule.DstNamedPortIpSetIDs) > 0 {
+		dstIPSets = rule.DstNamedPortIpSetIDs
+		isDstIPSet = true
+	} else {
+		dstIPSets = rule.NotDstNamedPortIpSetIDs
+		isDstIPSet = false
+	}
+	for i := 0; i < len(srcIPSets) || i < len(dstIPSets); i++ {
+		if i < len(srcIPSets) && i < len(dstIPSets) {
+			if isSrcIPSet {
+				match = match.SourceIPSet(srcIPSets[i])
+			} else {
+				match = match.NotSourceIPSet(srcIPSets[i])
+			}
+			if isDstIPSet {
+				match = match.DestIPSet(dstIPSets[i])
+			} else {
+				match = match.NotDestIPSet(dstIPSets[i])
+			}
+		} else if i < len(dstIPSets) {
+			if isDstIPSet {
+				match = match.DestIPSet(dstIPSets[i])
+			} else {
+				match = match.NotDestIPSet(dstIPSets[i])
+			}
+		} else {
+			if isSrcIPSet {
+				match = match.SourceIPSet(srcIPSets[i])
+			} else {
+				match = match.NotSourceIPSet(srcIPSets[i])
+			}
+		}
+	}
+
+	var (
+		srcNets        []string
+		dstNets        []string
+		isSrcNetNative bool
+		isDstNetNative bool
+	)
+	if len(rule.SrcNets) > 0 {
+		srcNets = rule.SrcNets
+		isSrcNetNative = true
+	} else {
+		srcNets = rule.NotSrcNets
+		isSrcNetNative = false
+	}
+	if len(rule.DstNets) > 0 {
+		dstNets = rule.DstNets
+		isDstNetNative = true
+	} else {
+		dstNets = rule.NotDstNets
+		isDstNetNative = false
 	}
 
 	matches := make([]generictables.MatchCriteria, 0)
-	for _, snet := range rule.SrcNets {
-		for _, dnet := range rule.DstNets {
-			matches = append(matches, match.SourceNet(snet).DestNet(dnet))
+	if len(srcNets) > 0 || len(dstNets) > 0 {
+		if len(srcNets) > 0 && len(dstNets) > 0 {
+			for _, srcNet := range srcNets {
+				matchNet := match.Copy()
+				if isSrcNetNative {
+					matchNet = matchNet.SourceNet(srcNet)
+				} else {
+					matchNet = matchNet.NotSourceNet(srcNet)
+				}
+				for _, dstNet := range dstNets {
+					matchNet2 := matchNet.Copy()
+					if isDstNetNative {
+						matchNet2 = matchNet2.DestNet(dstNet)
+					} else {
+						matchNet2 = matchNet2.NotDestNet(dstNet)
+					}
+					matches = append(matches, matchNet2)
+				}
+			}
+		} else if len(srcNets) == 0 {
+			for _, dstNet := range dstNets {
+				matchNet := match.Copy()
+				if isDstNetNative {
+					matchNet = matchNet.DestNet(dstNet)
+				} else {
+					matchNet = matchNet.NotDestNet(dstNet)
+				}
+				matches = append(matches, matchNet)
+			}
+		} else {
+			for _, srcNet := range srcNets {
+				matchNet := match.Copy()
+				if isSrcNetNative {
+					matchNet = matchNet.SourceNet(srcNet)
+				} else {
+					matchNet = matchNet.NotSourceNet(srcNet)
+				}
+				matches = append(matches, matchNet)
+			}
 		}
+	} else {
+		matches = append(matches, match)
 	}
 
 	rules := make([]generictables.Rule, 0)
@@ -149,6 +288,37 @@ func (r *DefaultRuleRenderer) ruleToIptablesRules(rule *model.Rule, ipVersion in
 	}
 
 	return rules
+}
+
+// splitPorts splits the input list of ports into groups containing up to 15 port numbers.
+// iptables limit 15 ports per rule in a multiport match. A single port takes up one slot, a range of ports take 2
+func splitPorts(ports []string) [][]string {
+	const slotAvailablePerSplit = 15
+	var (
+		splits [][]string
+		split  []string
+	)
+	remainingSlotAvailablePerSplit := slotAvailablePerSplit
+	for _, port := range ports {
+		var numSlots int
+		portRange := strings.Split(port, ":")
+		if len(portRange) > 1 {
+			numSlots = 2
+		} else {
+			numSlots = 1
+		}
+		if remainingSlotAvailablePerSplit < numSlots {
+			splits = append(splits, split)
+			remainingSlotAvailablePerSplit = slotAvailablePerSplit
+			split = nil
+		}
+		split = append(split, port)
+		remainingSlotAvailablePerSplit -= numSlots
+	}
+	if split != nil {
+		splits = append(splits, split)
+	}
+	return splits
 }
 
 func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Action {

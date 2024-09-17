@@ -26,6 +26,11 @@ func (m matchBuilder) String() string {
 	return fmt.Sprintf("Match[%v]", []string(m))
 }
 
+func (m matchBuilder) Copy() generictables.MatchCriteria {
+	var mCopy matchBuilder
+	return append(mCopy, m...)
+}
+
 func (m matchBuilder) ConntrackState(stateNames string) generictables.MatchCriteria {
 	return append(m, fmt.Sprintf("-m conntrack --ctstate %s", stateNames))
 }
@@ -47,23 +52,23 @@ func (m matchBuilder) ProtocolNum(num uint8) generictables.MatchCriteria {
 }
 
 func (m matchBuilder) NotProtocolNum(num uint8) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("! p %d", num))
+	return append(m, fmt.Sprintf("! -p %d", num))
 }
 
 func (m matchBuilder) SourceNet(net string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("-s %s", net))
+	return append(m, fmt.Sprintf("--source %s", net))
 }
 
 func (m matchBuilder) NotSourceNet(net string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("! s %s", net))
+	return append(m, fmt.Sprintf("! --source %s", net))
 }
 
 func (m matchBuilder) DestNet(net string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("-d %s", net))
+	return append(m, fmt.Sprintf("--destination %s", net))
 }
 
 func (m matchBuilder) NotDestNet(net string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("! ds %s", net))
+	return append(m, fmt.Sprintf("! --destination %s", net))
 }
 
 func (m matchBuilder) SourceIPSet(name string) generictables.MatchCriteria {
@@ -80,4 +85,24 @@ func (m matchBuilder) DestIPSet(name string) generictables.MatchCriteria {
 
 func (m matchBuilder) NotDestIPSet(name string) generictables.MatchCriteria {
 	return append(m, fmt.Sprintf("-m set ! --match-set %s dst", name))
+}
+
+func (m matchBuilder) SourcePorts(ports []string) generictables.MatchCriteria {
+	joinPorts := strings.Join(ports, ",")
+	return append(m, fmt.Sprintf("-m multiport --source-ports %s", joinPorts))
+}
+
+func (m matchBuilder) NotSourcePorts(ports []string) generictables.MatchCriteria {
+	joinPorts := strings.Join(ports, ",")
+	return append(m, fmt.Sprintf("-m multiport ! --source-ports %s", joinPorts))
+}
+
+func (m matchBuilder) DestPorts(ports []string) generictables.MatchCriteria {
+	joinPorts := strings.Join(ports, ",")
+	return append(m, fmt.Sprintf("-m multiport --destination-ports %s", joinPorts))
+}
+
+func (m matchBuilder) NotDestPorts(ports []string) generictables.MatchCriteria {
+	joinPorts := strings.Join(ports, ",")
+	return append(m, fmt.Sprintf("-m multiport ! --destination-ports %s", joinPorts))
 }

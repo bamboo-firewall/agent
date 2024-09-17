@@ -16,17 +16,18 @@ type PolicyMetadata struct {
 type PolicySpec struct {
 	Selector string   `json:"selector"`
 	Types    []string `json:"types"`
-	Ingress  []Rule   `json:"ingress"`
-	Egress   []Rule   `json:"egress"`
+	Ingress  []*Rule  `json:"ingress"`
+	Egress   []*Rule  `json:"egress"`
 }
 
 type Rule struct {
 	Action      string       `json:"action"`
-	IPVersion   int          `json:"ip_version"`
+	IPVersion   int          `json:"ipVersion"`
 	Metadata    RuleMetadata `json:"metadata"`
 	Protocol    string       `json:"protocol"`
-	Source      RuleEntity   `json:"source"`
-	Destination RuleEntity   `json:"destination"`
+	NotProtocol string       `json:"notProtocol"`
+	Source      *RuleEntity  `json:"source"`
+	Destination *RuleEntity  `json:"destination"`
 }
 
 type RuleMetadata struct {
@@ -34,6 +35,8 @@ type RuleMetadata struct {
 }
 
 type RuleEntity struct {
-	Nets  []string `json:"nets"`
-	Ports []string `json:"ports"`
+	Nets     []string      `json:"nets"`
+	NotNets  []string      `json:"notNets"`
+	Ports    []interface{} `json:"ports"`
+	NotPorts []interface{} `json:"notPorts"`
 }
