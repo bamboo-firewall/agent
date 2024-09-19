@@ -1,8 +1,8 @@
 package manager
 
 import (
+	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
 	"github.com/bamboo-firewall/agent/pkg/ipset"
-	"github.com/bamboo-firewall/agent/pkg/model"
 )
 
 type IPSet struct {
@@ -19,26 +19,26 @@ func NewIPSet(ipset *ipset.IPSet) *IPSet {
 
 func (i *IPSet) OnUpdate(msg interface{}) {
 	switch m := msg.(type) {
-	case *model.Agent:
-		sets := i.networkSetsToIPSets(m.IPSet)
+	case *dto.FetchPoliciesOutput:
+		sets := i.networkSetsToIPSets(m.ParsedSets)
 
 		i.ipset.UpdateIPSet(sets)
 	}
 }
 
-func (i *IPSet) networkSetsToIPSets(agentSets *model.AgentIPSet) map[string]map[string]struct{} {
+func (i *IPSet) networkSetsToIPSets(parsedSets []*dto.ParsedSet) map[string]map[string]struct{} {
 	sets := make(map[string]map[string]struct{})
-	for _, agentSet := range agentSets.IPSets {
-		if agentSet.IPVersion != i.ipVersion {
+	for _, parsedSet := range parsedSets {
+		if parsedSet.IPVersion != i.ipVersion {
 			continue
 		}
 
 		members := make(map[string]struct{})
-		for _, member := range agentSet.Members {
-			members[member] = struct{}{}
+		for _, net := range parsedSet.Nets {
+			members[net] = struct{}{}
 		}
 
-		sets[ipset.IPSetNamePrefix+agentSet.Name] = members
+		sets[ipset.IPSetNamePrefix+parsedSet.Name] = members
 	}
 
 	return sets

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -36,6 +35,7 @@ type apiServer interface {
 type dataplaneConnector struct {
 	dataplane                dataplaneDriver
 	apiServer                apiServer
+	agentMetadata            *model.AgentMetadata
 	hostName                 string
 	dataStoreRefreshInterval time.Duration
 	ctx                      context.Context
@@ -59,8 +59,13 @@ func Run(conf config.Config) {
 		datastoreRefreshInterval = conf.DatastoreRefreshInterval
 	}
 	connector := &dataplaneConnector{
-		dataplane:                dataplane,
-		apiServer:                as,
+		dataplane: dataplane,
+		apiServer: as,
+		agentMetadata: &model.AgentMetadata{
+			HEPVersion:  0,
+			GNPVersions: make(map[string]uint),
+			GNSVersions: make(map[string]uint),
+		},
 		hostName:                 conf.HostName,
 		dataStoreRefreshInterval: datastoreRefreshInterval,
 		ctx:                      ctx,
@@ -111,94 +116,52 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 			msg, err = dc.apiServer.FetchPolicies(dc.ctx, dc.hostName)
 			if err != nil {
 				// ToDo: check connection or handle error need to retry or not
-				slog.Error("fetch policies error:", err)
+				slog.Error("fetch policies error:", "err", err)
 				continue
 			}
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
-		agent := convertAPIToAgentModel(msg)
-		if agent == nil {
+		if !dc.isNeedUpdateMessage(msg.MetaData) {
 			continue
 		}
+		dc.agentMetadata = &model.AgentMetadata{
+			HEPVersion:  msg.MetaData.HEPVersion,
+			GNPVersions: msg.MetaData.GNPVersions,
+			GNSVersions: msg.MetaData.GNSVersions,
+		}
 
-		// convert rule here
-		if err = dc.dataplane.SendMessage(agent); err != nil {
-			slog.Info("send message error:", err)
+		if err = dc.dataplane.SendMessage(msg); err != nil {
+			slog.Info("send message error:", "err", err)
 		}
 	}
 }
 
-func convertAPIToAgentModel(agentDTO *dto.FetchPoliciesOutput) *model.Agent {
-	if agentDTO == nil {
-		return nil
+func (dc *dataplaneConnector) isNeedUpdateMessage(newVersion dto.HostEndPointPolicyMetadata) bool {
+	slog.Info("check version", "currentVersion", dc.agentMetadata, "newVersion", newVersion)
+	if dc.agentMetadata == nil {
+		return true
 	}
-	if !agentDTO.IsNew {
-		return nil
+	newGNPVersions := newVersion.GNPVersions
+	newGNSVersions := newVersion.GNSVersions
+	if len(newGNPVersions) != len(dc.agentMetadata.GNPVersions) {
+		return true
 	}
-	agentPolicy := new(model.AgentPolicy)
-	for _, policy := range agentDTO.GNPs {
-		inboundRules := make([]*model.Rule, 0)
-		outboundRules := make([]*model.Rule, 0)
-		for _, rule := range policy.Spec.Ingress {
-			inboundRules = append(inboundRules, convertAPIToRuleModel(rule))
+	if len(newGNSVersions) != len(dc.agentMetadata.GNSVersions) {
+		return true
+	}
+	for currentUUID, currentVersion := range dc.agentMetadata.GNPVersions {
+		_, ok := newGNPVersions[currentUUID]
+		if !ok || currentVersion != newGNPVersions[currentUUID] {
+			return true
 		}
-
-		for _, rule := range policy.Spec.Egress {
-			outboundRules = append(outboundRules, convertAPIToRuleModel(rule))
+	}
+	for currentUUID, currentVersion := range dc.agentMetadata.GNSVersions {
+		_, ok := newGNSVersions[currentUUID]
+		if !ok || currentVersion != newGNSVersions[currentUUID] {
+			return true
 		}
-		agentPolicy.Policies = append(agentPolicy.Policies, &model.Policy{
-			ID:            policy.ID,
-			InboundRules:  inboundRules,
-			OutboundRules: outboundRules,
-		})
 	}
-	agentIPSet := new(model.AgentIPSet)
-	for _, ipset := range agentDTO.GNSs {
-		agentIPSet.IPSets = append(agentIPSet.IPSets, &model.IPSet{
-			ID:        ipset.ID,
-			Version:   ipset.Version,
-			Name:      ipset.Metadata.Name,
-			IPVersion: ipset.Metadata.IPVersion,
-			Members:   ipset.Spec.Nets,
-		})
-	}
-	return &model.Agent{
-		Policy: agentPolicy,
-		IPSet:  agentIPSet,
-	}
-}
-
-func convertAPIToRuleModel(ruleDTO *dto.Rule) *model.Rule {
-	if ruleDTO == nil {
-		return nil
-	}
-	return &model.Rule{
-		Action:    ruleDTO.Action,
-		IPVersion: 4,
-		//Metadata:                rule.Metadata,
-		Protocol:                ruleDTO.Protocol,
-		SrcNets:                 ruleDTO.Source.Nets,
-		SrcPorts:                convertPorts(ruleDTO.Source.Ports),
-		SrcNamedPortIpSetIDs:    nil,
-		DstNets:                 ruleDTO.Destination.Nets,
-		DstPorts:                convertPorts(ruleDTO.Destination.Ports),
-		DstNamedPortIpSetIDs:    nil,
-		NotProtocol:             ruleDTO.NotProtocol,
-		NotSrcNets:              ruleDTO.Source.NotNets,
-		NotSrcPorts:             convertPorts(ruleDTO.Source.NotPorts),
-		NotSrcNamedPortIpSetIDs: nil,
-		NotDstNets:              ruleDTO.Destination.NotNets,
-		NotDstPorts:             convertPorts(ruleDTO.Destination.NotPorts),
-		NotDstNamedPortIpSetIDs: nil,
-	}
-}
-
-func convertPorts(ports []interface{}) []string {
-	var portStrings []string
-	for _, port := range ports {
-		portStrings = append(portStrings, fmt.Sprintf("%x", port))
-	}
-	return portStrings
+	return false
 }

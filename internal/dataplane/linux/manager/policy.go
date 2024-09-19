@@ -1,12 +1,12 @@
 package manager
 
 import (
+	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
 	"github.com/bamboo-firewall/agent/pkg/generictables"
-	"github.com/bamboo-firewall/agent/pkg/model"
 )
 
 type RuleRenderer interface {
-	PoliciesToIptablesChains(agentPolicy *model.AgentPolicy, ipVersion int, apiServerIPV4 string) []*generictables.Chain
+	PoliciesToIptablesChains(policies []*dto.ParsedPolicy, ipVersion int, apiServerIPV4 string) []*generictables.Chain
 }
 
 type policy struct {
@@ -28,8 +28,8 @@ func NewPolicy(filterTable generictables.Table, ipVersion int, apiServerIPV4 str
 
 func (p *policy) OnUpdate(msg interface{}) {
 	switch m := msg.(type) {
-	case *model.Agent:
-		chains := p.ruleRenderer.PoliciesToIptablesChains(m.Policy, p.ipVersion, p.apiServerIPV4)
+	case *dto.FetchPoliciesOutput:
+		chains := p.ruleRenderer.PoliciesToIptablesChains(m.ParsedPolicies, p.ipVersion, p.apiServerIPV4)
 
 		p.filterTable.UpdateChains(chains)
 	}

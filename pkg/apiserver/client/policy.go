@@ -12,8 +12,7 @@ import (
 func (c *apiServer) FetchPolicies(ctx context.Context, hostName string) (*dto.FetchPoliciesOutput, error) {
 	res := c.client.NewRequest().
 		SetSubURL(fmt.Sprintf("/api/internal/v1/hostEndpoints/byName/%s/fetchPolicies", hostName)).
-		SetMethod(http.MethodPost).
-		SetBody(nil).
+		SetMethod(http.MethodGet).
 		DoRequest(ctx)
 	if res.Err != nil {
 		return nil, fmt.Errorf("failed to fetch new policy: %w", res.Err)
