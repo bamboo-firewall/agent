@@ -59,13 +59,8 @@ func Run(conf config.Config) {
 		datastoreRefreshInterval = conf.DatastoreRefreshInterval
 	}
 	connector := &dataplaneConnector{
-		dataplane: dataplane,
-		apiServer: as,
-		agentMetadata: &model.AgentMetadata{
-			HEPVersion:  0,
-			GNPVersions: make(map[string]uint),
-			GNSVersions: make(map[string]uint),
-		},
+		dataplane:                dataplane,
+		apiServer:                as,
 		hostName:                 conf.HostName,
 		dataStoreRefreshInterval: datastoreRefreshInterval,
 		ctx:                      ctx,
@@ -139,7 +134,6 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 }
 
 func (dc *dataplaneConnector) isNeedUpdateMessage(newVersion dto.HostEndPointPolicyMetadata) bool {
-	slog.Info("check version", "currentVersion", dc.agentMetadata, "newVersion", newVersion)
 	if dc.agentMetadata == nil {
 		return true
 	}
