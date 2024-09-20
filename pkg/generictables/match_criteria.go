@@ -3,6 +3,7 @@ package generictables
 type MatchCriteria interface {
 	Render() string
 	String() string
+	Merge(match MatchCriteria) MatchCriteria
 	Copy() MatchCriteria
 	ConntrackState(stateNames string) MatchCriteria
 	NotConntrackState(stateNames string) MatchCriteria

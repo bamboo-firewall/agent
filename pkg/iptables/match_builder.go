@@ -31,6 +31,14 @@ func (m matchBuilder) Copy() generictables.MatchCriteria {
 	return append(mCopy, m...)
 }
 
+func (m matchBuilder) Merge(match generictables.MatchCriteria) generictables.MatchCriteria {
+	if match == nil {
+		return m
+	}
+	mBuilder := match.(matchBuilder)
+	return append(m, mBuilder...)
+}
+
 func (m matchBuilder) ConntrackState(stateNames string) generictables.MatchCriteria {
 	return append(m, fmt.Sprintf("-m conntrack --ctstate %s", stateNames))
 }

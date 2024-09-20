@@ -112,12 +112,12 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 		return nil
 	}
 
-	match := r.NewMatch()
+	mainMatch := r.NewMatch()
 	if rule.Protocol != "" {
 		if rule.IsProtocolNegative {
-			match = match.NotProtocol(rule.Protocol)
+			mainMatch = mainMatch.NotProtocol(rule.Protocol)
 		} else {
-			match = match.Protocol(rule.Protocol)
+			mainMatch = mainMatch.Protocol(rule.Protocol)
 		}
 	}
 
@@ -131,50 +131,46 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 	if len(rule.DstPorts) > 0 {
 		dstPorts = splitPorts(rule.DstPorts)
 	}
-	for i := 0; i < len(srcPorts) || i < len(dstPorts); i++ {
-		if i < len(srcPorts) && i < len(dstPorts) {
-			if rule.IsSrcPortNegative {
-				match = match.NotSourcePorts(srcPorts[i])
-			} else {
-				match = match.SourcePorts(srcPorts[i])
+	var matchPorts []generictables.MatchCriteria
+	if len(srcPorts) > 0 || len(dstPorts) > 0 {
+		if len(srcPorts) > 0 && len(dstPorts) > 0 {
+			for _, srcPort := range srcPorts {
+				matchPort := r.NewMatch()
+				if rule.IsSrcPortNegative {
+					matchPort = matchPort.NotSourcePorts(srcPort)
+				} else {
+					matchPort = matchPort.SourcePorts(srcPort)
+				}
+				for _, dstPort := range dstPorts {
+					matchPort2 := matchPort.Copy()
+					if rule.IsDstPortNegative {
+						matchPort2 = matchPort2.NotDestPorts(dstPort)
+					} else {
+						matchPort2 = matchPort2.DestPorts(dstPort)
+					}
+					matchPorts = append(matchPorts, matchPort2)
+				}
 			}
-			if rule.IsDstPortNegative {
-				match = match.NotDestPorts(dstPorts[i])
-			} else {
-				match = match.DestPorts(dstPorts[i])
-			}
-		} else if i < len(dstPorts) {
-			if rule.IsDstPortNegative {
-				match = match.NotDestPorts(dstPorts[i])
-			} else {
-				match = match.DestPorts(dstPorts[i])
+		} else if len(dstPorts) > 0 {
+			for _, dstPort := range dstPorts {
+				matchPort := r.NewMatch()
+				if rule.IsDstPortNegative {
+					matchPort = matchPort.NotDestPorts(dstPort)
+				} else {
+					matchPort = matchPort.DestPorts(dstPort)
+				}
+				matchPorts = append(matchPorts, matchPort)
 			}
 		} else {
-			if rule.IsSrcPortNegative {
-				match = match.NotSourcePorts(srcPorts[i])
-			} else {
-				match = match.SourcePorts(srcPorts[i])
+			for _, srcPort := range srcPorts {
+				matchPort := r.NewMatch()
+				if rule.IsSrcPortNegative {
+					matchPort = matchPort.NotSourcePorts(srcPort)
+				} else {
+					matchPort = matchPort.SourcePorts(srcPort)
+				}
+				matchPorts = append(matchPorts, matchPort)
 			}
-		}
-	}
-
-	var (
-		srcIPSets []string
-		dstIPSets []string
-	)
-	if len(rule.SrcGNSNetNames) > 0 {
-		srcIPSets = rule.SrcGNSNetNames
-	}
-	if len(rule.DstGNSNetNames) > 0 {
-		dstIPSets = rule.DstGNSNetNames
-	}
-	for i := 0; i < len(srcIPSets) || i < len(dstIPSets); i++ {
-		if i < len(srcIPSets) && i < len(dstIPSets) {
-			match = match.SourceIPSet(ipset.IPSetNamePrefix + srcIPSets[i]).DestIPSet(ipset.IPSetNamePrefix + dstIPSets[i])
-		} else if i < len(dstIPSets) {
-			match = match.SourceIPSet(ipset.IPSetNamePrefix + srcIPSets[i])
-		} else {
-			match = match.SourceIPSet(ipset.IPSetNamePrefix + srcIPSets[i])
 		}
 	}
 
@@ -189,11 +185,11 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 		dstNets = rule.DstNets
 	}
 
-	matches := make([]generictables.MatchCriteria, 0)
+	var matchNets []generictables.MatchCriteria
 	if len(srcNets) > 0 || len(dstNets) > 0 {
 		if len(srcNets) > 0 && len(dstNets) > 0 {
 			for _, srcNet := range srcNets {
-				matchNet := match.Copy()
+				matchNet := r.NewMatch()
 				if rule.IsSrcNetNegative {
 					matchNet = matchNet.NotSourceNet(srcNet)
 				} else {
@@ -206,42 +202,112 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 					} else {
 						matchNet2 = matchNet2.DestNet(dstNet)
 					}
-					matches = append(matches, matchNet2)
+					matchNets = append(matchNets, matchNet2)
 				}
 			}
 		} else if len(srcNets) == 0 {
 			for _, dstNet := range dstNets {
-				matchNet := match.Copy()
+				matchNet := r.NewMatch()
 				if rule.IsDstNetNegative {
 					matchNet = matchNet.NotDestNet(dstNet)
 				} else {
 					matchNet = matchNet.DestNet(dstNet)
 				}
-				matches = append(matches, matchNet)
+				matchNets = append(matchNets, matchNet)
 			}
 		} else {
 			for _, srcNet := range srcNets {
-				matchNet := match.Copy()
+				matchNet := r.NewMatch()
 				if rule.IsSrcNetNegative {
 					matchNet = matchNet.NotSourceNet(srcNet)
 				} else {
 					matchNet = matchNet.SourceNet(srcNet)
 				}
-				matches = append(matches, matchNet)
+				matchNets = append(matchNets, matchNet)
 			}
 		}
-	} else {
-		matches = append(matches, match)
 	}
 
+	// use sets for each match
+	var (
+		srcIPSets []string
+		dstIPSets []string
+	)
+	if len(rule.SrcGNSNetNames) > 0 {
+		srcIPSets = rule.SrcGNSNetNames
+	}
+	if len(rule.DstGNSNetNames) > 0 {
+		dstIPSets = rule.DstGNSNetNames
+	}
+	var matchSets []generictables.MatchCriteria
+	if len(srcIPSets) > 0 || len(dstIPSets) > 0 {
+		if len(srcIPSets) > 0 && len(dstIPSets) > 0 {
+			for _, srcIP := range srcIPSets {
+				matchSet := r.NewMatch().SourceIPSet(ipset.IPSetNamePrefix + srcIP)
+				for _, dstIP := range dstIPSets {
+					matchSets = append(matchSets, matchSet.Copy().DestIPSet(ipset.IPSetNamePrefix+dstIP))
+				}
+			}
+		} else if len(dstIPSets) > 0 {
+			for _, dstIP := range dstIPSets {
+				matchSets = append(matchSets, r.NewMatch().DestIPSet(ipset.IPSetNamePrefix+dstIP))
+			}
+		} else {
+			for _, srcIP := range srcIPSets {
+				matchSets = append(matchSets, r.NewMatch().SourceIPSet(ipset.IPSetNamePrefix+srcIP))
+			}
+		}
+	}
+
+	matches := r.cartesianMatches(matchPorts, matchNets, matchSets)
 	rules := make([]generictables.Rule, 0)
-	for i := range matches {
+	for _, match := range matches {
 		rules = append(rules, generictables.Rule{
-			Match:  matches[i],
+			Match:  mainMatch.Merge(match),
 			Action: r.renderRuleAction(rule.Action),
 		})
 	}
 
+	return rules
+}
+
+func (r *DefaultRuleRenderer) cartesianMatches(arrayMatches ...[]generictables.MatchCriteria) []generictables.MatchCriteria {
+	// remove empty array
+	var nonArrayMatches [][]generictables.MatchCriteria
+	for _, arrayMatch := range arrayMatches {
+		if len(arrayMatch) > 0 {
+			nonArrayMatches = append(nonArrayMatches, arrayMatch)
+		}
+	}
+	resultMatches := []generictables.MatchCriteria{r.NewMatch()}
+	for _, arrayMatch := range nonArrayMatches {
+		var tmpMatches []generictables.MatchCriteria
+		for _, resultMatch := range resultMatches {
+			for _, match := range arrayMatch {
+				combination := resultMatch.Copy().Merge(match)
+				tmpMatches = append(tmpMatches, combination)
+			}
+		}
+		resultMatches = tmpMatches
+	}
+	return resultMatches
+}
+
+func (r *DefaultRuleRenderer) cartesianRules(mainMatch generictables.MatchCriteria, action generictables.Action, matches ...[]generictables.MatchCriteria) []generictables.Rule {
+	rules := make([]generictables.Rule, 1)
+	for _, match := range matches {
+		var tmpRules []generictables.Rule
+		for _, rule := range rules {
+			for _, m := range match {
+				combination := generictables.Rule{
+					Match:  mainMatch.Merge(rule.Match).Merge(m),
+					Action: action,
+				}
+				tmpRules = append(tmpRules, combination)
+			}
+		}
+		rules = tmpRules
+	}
 	return rules
 }
 
