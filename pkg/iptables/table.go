@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	ModeLegacy = "legacy"
-	ModeNFT    = "nft"
+	modeLegacy = "legacy"
+	modeNFT    = "nft"
 
 	defaultLockSecondTimeout = 3
+
+	maxNameLength = 28
 )
 
 var (
@@ -158,7 +160,7 @@ func (t *Table) Apply() {
 		t.loadFromDataplane()
 	}
 	retries := 3
-	retryDelay := 3000 * time.Millisecond
+	retryDelay := 100 * time.Millisecond
 
 	for {
 		err := t.apply()
@@ -210,7 +212,7 @@ func (t *Table) apply() error {
 		}
 
 		var previousHashes []string
-		if t.mode == ModeNFT {
+		if t.mode == modeNFT {
 			previousHashes = nil
 		} else {
 			previousHashes = t.chainHashesFromDataplane[chainName]
@@ -230,7 +232,7 @@ func (t *Table) apply() error {
 		}
 
 		var previousHashes []string
-		if t.mode == ModeNFT {
+		if t.mode == modeNFT {
 			previousHashes = nil
 		} else {
 			previousHashes = t.chainHashesFromDataplane[chainName]
@@ -283,9 +285,8 @@ func (t *Table) apply() error {
 
 	buf.EndTransaction()
 	if buf.IsEmpty() {
-		slog.Info("No default rules applied", "table", t.name)
+		slog.Info("No new rules applied", "table", t.name)
 	} else {
-		fmt.Println(buf.buf.String())
 		return t.execRestore(buf)
 	}
 
@@ -449,4 +450,11 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		}
 	}
 	return hashes, rules, nil
+}
+
+func GetMaxCustomChainName(originName string) string {
+	if len(originName) > maxNameLength {
+		return originName[0:maxNameLength]
+	}
+	return originName
 }

@@ -17,8 +17,6 @@ import (
 const (
 	inetV4 = "inet"
 	inetV6 = "inet6"
-
-	IPSetNamePrefix = "BAMBOO-"
 )
 
 const ipsetCmd = "ipset"
@@ -46,8 +44,7 @@ func NewIPSet(ipVersion int) (*IPSet, error) {
 		return nil, err
 	}
 	set := &IPSet{
-		ourSetRegex:    regexp.MustCompile(`^create (` + IPSetNamePrefix + `[a-zA-Z0-9_]+) ([a-z:]+)(.*)$`),
-		ourMemberRegex: regexp.MustCompile(`^add (` + IPSetNamePrefix + `[a-zA-Z0-9_]+) (\S+)(.*)$`),
+		ourMemberRegex: regexp.MustCompile(`^add (` + namePrefix + `[a-zA-Z0-9_-]+) (\S+)(.*)$`),
 		ipsetCmd:       ipsetCmd,
 	}
 
@@ -58,6 +55,7 @@ func NewIPSet(ipVersion int) (*IPSet, error) {
 		set.inetVersion = inetV4
 		set.ipVersion = generictables.IPFamily4
 	}
+	set.ourSetRegex = regexp.MustCompile(fmt.Sprintf(`^create (%s[a-zA-Z0-9_-]+) ([a-z:,]+) (family) (%s) (.*)$`, namePrefix, set.inetVersion))
 	return set, nil
 }
 
@@ -226,6 +224,9 @@ func (i *IPSet) readIPSetFrom(r io.ReadCloser) (map[string]map[string]struct{}, 
 
 		captures = i.ourMemberRegex.FindStringSubmatch(line)
 		if captures != nil {
+			if ipsets[captures[1]] == nil {
+				continue
+			}
 			ipsets[captures[1]][captures[2]] = struct{}{}
 		}
 	}

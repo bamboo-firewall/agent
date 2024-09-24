@@ -75,9 +75,9 @@ func extractIptablesVersion(str string) (version, string, error) {
 
 	var mode string
 	if result[2] != "" {
-		mode = ModeNFT
+		mode = modeNFT
 	} else {
-		mode = ModeLegacy
+		mode = modeLegacy
 	}
 	return version{
 		major: major,

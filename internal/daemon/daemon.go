@@ -29,17 +29,17 @@ type dataplaneDriver interface {
 }
 
 type apiServer interface {
-	FetchPolicies(ctx context.Context, hostName string) (*dto.FetchPoliciesOutput, error)
+	FetchHostEndpointPolicy(ctx context.Context, hostName string) (*dto.HostEndpointPolicy, error)
 }
 
 type dataplaneConnector struct {
-	dataplane                dataplaneDriver
-	apiServer                apiServer
-	agentMetadata            *model.AgentMetadata
-	hostName                 string
-	dataStoreRefreshInterval time.Duration
-	ctx                      context.Context
-	ctxCancelFunc            context.CancelFunc
+	dataplane                  dataplaneDriver
+	apiServer                  apiServer
+	hostEndpointPolicyMetadata *model.HostEndpointPolicyMetadata
+	hostName                   string
+	dataStoreRefreshInterval   time.Duration
+	ctx                        context.Context
+	ctxCancelFunc              context.CancelFunc
 }
 
 func Run(conf config.Config) {
@@ -91,9 +91,9 @@ func interruptHandle(dc *dataplaneConnector) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	slog.Debug("Listening Signal...")
+	slog.Debug("listening signal...")
 	s := <-c
-	slog.Info("Shutting down Server ...", "Received signal.", s)
+	slog.Info("shutting down server ...", "received signal.", s)
 
 	dc.ctxCancelFunc()
 }
@@ -102,56 +102,66 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 	timer := time.NewTimer(dc.dataStoreRefreshInterval)
 	for {
 		var (
-			msg *dto.FetchPoliciesOutput
-			err error
+			hostEndpointPolicy *dto.HostEndpointPolicy
+			err                error
 		)
 		utils.ResetTimer(timer, dc.dataStoreRefreshInterval)
 		select {
 		case <-timer.C:
-			msg, err = dc.apiServer.FetchPolicies(dc.ctx, dc.hostName)
+			hostEndpointPolicy, err = dc.apiServer.FetchHostEndpointPolicy(dc.ctx, dc.hostName)
 			if err != nil {
 				// ToDo: check connection or handle error need to retry or not
-				slog.Error("fetch policies error:", "err", err)
+				slog.Error("fetch host endpoint policies error:", "err", err)
 				continue
 			}
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
-		if !dc.isNeedUpdateMessage(msg.MetaData) {
+		if !dc.isNeedUpdatePolicy(hostEndpointPolicy.MetaData) {
 			continue
 		}
-		dc.agentMetadata = &model.AgentMetadata{
-			HEPVersion:  msg.MetaData.HEPVersion,
-			GNPVersions: msg.MetaData.GNPVersions,
-			GNSVersions: msg.MetaData.GNSVersions,
+		dc.hostEndpointPolicyMetadata = &model.HostEndpointPolicyMetadata{
+			HEPVersions: hostEndpointPolicy.MetaData.HEPVersions,
+			GNPVersions: hostEndpointPolicy.MetaData.GNPVersions,
+			GNSVersions: hostEndpointPolicy.MetaData.GNSVersions,
 		}
 
-		if err = dc.dataplane.SendMessage(msg); err != nil {
+		if err = dc.dataplane.SendMessage(hostEndpointPolicy); err != nil {
 			slog.Info("send message error:", "err", err)
 		}
 	}
 }
 
-func (dc *dataplaneConnector) isNeedUpdateMessage(newVersion dto.HostEndPointPolicyMetadata) bool {
-	if dc.agentMetadata == nil {
+func (dc *dataplaneConnector) isNeedUpdatePolicy(newVersion dto.HostEndPointPolicyMetadata) bool {
+	if dc.hostEndpointPolicyMetadata == nil {
 		return true
 	}
 	newGNPVersions := newVersion.GNPVersions
+	newHEPVersions := dc.hostEndpointPolicyMetadata.HEPVersions
 	newGNSVersions := newVersion.GNSVersions
-	if len(newGNPVersions) != len(dc.agentMetadata.GNPVersions) {
+	if len(newGNPVersions) != len(dc.hostEndpointPolicyMetadata.GNPVersions) {
 		return true
 	}
-	if len(newGNSVersions) != len(dc.agentMetadata.GNSVersions) {
+	if len(newHEPVersions) != len(dc.hostEndpointPolicyMetadata.HEPVersions) {
 		return true
 	}
-	for currentUUID, currentVersion := range dc.agentMetadata.GNPVersions {
+	if len(newGNSVersions) != len(dc.hostEndpointPolicyMetadata.GNSVersions) {
+		return true
+	}
+	for currentUUID, currentVersion := range dc.hostEndpointPolicyMetadata.GNPVersions {
 		_, ok := newGNPVersions[currentUUID]
 		if !ok || currentVersion != newGNPVersions[currentUUID] {
 			return true
 		}
 	}
-	for currentUUID, currentVersion := range dc.agentMetadata.GNSVersions {
+	for currentUUID, currentVersion := range dc.hostEndpointPolicyMetadata.HEPVersions {
+		_, ok := newHEPVersions[currentUUID]
+		if !ok || currentVersion != newHEPVersions[currentUUID] {
+			return true
+		}
+	}
+	for currentUUID, currentVersion := range dc.hostEndpointPolicyMetadata.GNSVersions {
 		_, ok := newGNSVersions[currentUUID]
 		if !ok || currentVersion != newGNSVersions[currentUUID] {
 			return true

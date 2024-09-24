@@ -2,43 +2,80 @@ package manager
 
 import (
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
+	"github.com/bamboo-firewall/agent/pkg/generictables"
 	"github.com/bamboo-firewall/agent/pkg/ipset"
 )
 
+const (
+	sourceSetHEP = "hep"
+	sourceSetGNS = "gns"
+)
+
 type IPSet struct {
-	ipVersion int
-	ipset     *ipset.IPSet
+	ipset               *ipset.IPSet
+	ipsetNameConvention *ipset.NameConvention
 }
 
-func NewIPSet(ipset *ipset.IPSet) *IPSet {
+func NewIPSet(ipset *ipset.IPSet, ipsetNameConvention *ipset.NameConvention) *IPSet {
 	return &IPSet{
-		ipset:     ipset,
-		ipVersion: ipset.GetIPVersion(),
+		ipset:               ipset,
+		ipsetNameConvention: ipsetNameConvention,
 	}
 }
 
 func (i *IPSet) OnUpdate(msg interface{}) {
 	switch m := msg.(type) {
-	case *dto.FetchPoliciesOutput:
-		sets := i.networkSetsToIPSets(m.ParsedSets)
+	case *dto.HostEndpointPolicy:
+		sets := i.networkSetsToIPSets(m.ParsedHEPs, m.ParsedGNSs)
 
 		i.ipset.UpdateIPSet(sets)
 	}
 }
 
-func (i *IPSet) networkSetsToIPSets(parsedSets []*dto.ParsedSet) map[string]map[string]struct{} {
+func (i *IPSet) networkSetsToIPSets(parsedHEPs []*dto.ParsedHEP, parsedGNSs []*dto.ParsedGNS) map[string]map[string]struct{} {
 	sets := make(map[string]map[string]struct{})
-	for _, parsedSet := range parsedSets {
-		if parsedSet.IPVersion != i.ipVersion {
+	var index int
+	for _, parsedHEP := range parsedHEPs {
+		var ips []string
+		if i.ipset.GetIPVersion() == generictables.IPFamily4 && len(parsedHEP.IPsV4) > 0 {
+			ips = parsedHEP.IPsV4
+		} else if i.ipset.GetIPVersion() == generictables.IPFamily6 && len(parsedHEP.IPsV6) > 0 {
+			ips = parsedHEP.IPsV6
+		} else {
 			continue
 		}
 
 		members := make(map[string]struct{})
-		for _, net := range parsedSet.Nets {
+		for _, ip := range ips {
+			members[ip] = struct{}{}
+		}
+
+		mainName := i.ipsetNameConvention.SetMainNameOfSet(parsedHEP.UUID, index, i.ipset.GetIPVersion(), sourceSetHEP, parsedHEP.Name)
+
+		sets[mainName] = members
+		index++
+	}
+
+	index = 0
+	for _, parsedGNS := range parsedGNSs {
+		var nets []string
+		if i.ipset.GetIPVersion() == generictables.IPFamily4 && len(parsedGNS.NetsV4) > 0 {
+			nets = parsedGNS.NetsV4
+		} else if i.ipset.GetIPVersion() == generictables.IPFamily6 && len(parsedGNS.NetsV6) > 0 {
+			nets = parsedGNS.NetsV6
+		} else {
+			continue
+		}
+
+		members := make(map[string]struct{})
+		for _, net := range nets {
 			members[net] = struct{}{}
 		}
 
-		sets[ipset.IPSetNamePrefix+parsedSet.Name] = members
+		mainName := i.ipsetNameConvention.SetMainNameOfSet(parsedGNS.UUID, index, i.ipset.GetIPVersion(), sourceSetGNS, parsedGNS.Name)
+
+		sets[mainName] = members
+		index++
 	}
 
 	return sets

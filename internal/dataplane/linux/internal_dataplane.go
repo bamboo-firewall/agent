@@ -36,7 +36,8 @@ type InternalDataplane struct {
 
 	ipsets []*ipset.IPSet
 
-	managers []Manager
+	tableManagers []Manager
+	ipsetManagers []Manager
 
 	// datastoreInSync set to true after we receive message from datastore
 	datastoreInSync bool
@@ -92,13 +93,19 @@ func NewInternalDataplane(parentCtx context.Context, conf config.Config) (*Inter
 		return nil, fmt.Errorf("new iptables v6 failed: %w", err)
 	}
 
-	ruleRenderer := rulerenderer.NewRenderer(generictables.LogPrefix)
+	ipsetNameConventionV4 := ipset.NewNameConvention()
+	ipsetNameConventionV6 := ipset.NewNameConvention()
 
-	dp.managers = append(dp.managers,
-		manager.NewIPSet(ipsetV4),
-		manager.NewIPSet(ipsetV6),
-		manager.NewPolicy(filerTableIPV4, generictables.IPFamily4, conf.APIServerIPv4, ruleRenderer),
-		manager.NewPolicy(filterTableIPV6, generictables.IPFamily6, conf.APIServerIPv4, ruleRenderer),
+	ruleRendererV4 := rulerenderer.NewRenderer(generictables.LogPrefix, ipsetNameConventionV4)
+	ruleRendererV6 := rulerenderer.NewRenderer(generictables.LogPrefix, ipsetNameConventionV6)
+
+	dp.ipsetManagers = append(dp.ipsetManagers,
+		manager.NewIPSet(ipsetV4, ipsetNameConventionV4),
+		manager.NewIPSet(ipsetV6, ipsetNameConventionV6),
+	)
+	dp.tableManagers = append(dp.tableManagers,
+		manager.NewPolicy(filerTableIPV4, generictables.IPFamily4, conf.APIServerIPv4, ruleRendererV4),
+		manager.NewPolicy(filterTableIPV6, generictables.IPFamily6, conf.APIServerIPv4, ruleRendererV6),
 	)
 
 	dp.filterTables = append(dp.filterTables,
@@ -165,15 +172,25 @@ func (dp *InternalDataplane) intervalUpdateDataplane() {
 func (dp *InternalDataplane) processMsgToManager(msg interface{}) {
 	dp.datastoreInSync = true
 	dp.dataplaneNeedsSync = true
-	var wgManager sync.WaitGroup
-	for _, m := range dp.managers {
-		wgManager.Add(1)
+	var wgIPSetManager sync.WaitGroup
+	for _, m := range dp.ipsetManagers {
+		wgIPSetManager.Add(1)
 		go func(m Manager) {
-			defer wgManager.Done()
+			defer wgIPSetManager.Done()
 			m.OnUpdate(msg)
 		}(m)
 	}
-	wgManager.Wait()
+	wgIPSetManager.Wait()
+
+	var wgTableManager sync.WaitGroup
+	for _, m := range dp.tableManagers {
+		wgTableManager.Add(1)
+		go func(m Manager) {
+			defer wgTableManager.Done()
+			m.OnUpdate(msg)
+		}(m)
+	}
+	wgTableManager.Wait()
 }
 
 func (dp *InternalDataplane) apply() {

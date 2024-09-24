@@ -6,10 +6,10 @@ import (
 
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
 	"github.com/bamboo-firewall/agent/pkg/generictables"
-	"github.com/bamboo-firewall/agent/pkg/ipset"
+	"github.com/bamboo-firewall/agent/pkg/iptables"
 )
 
-func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedPolicy, ipVersion int, apiServerIPV4 string) []*generictables.Chain {
+func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedGNP, ipVersion int, apiServerIPV4 string) []*generictables.Chain {
 	// For each policy
 	// our default table(contains default rules and jump to each policy)
 	var chains []*generictables.Chain
@@ -17,10 +17,14 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedPol
 	rulesJumpToOurOutputChain := make([]generictables.Rule, 0)
 	for i, policy := range policies {
 		if len(policy.InboundRules) > 0 {
-			chainName := generictables.OurInputChainPrefix + fmt.Sprint(i) // using name?
+			rules := r.rulesToTablesRules(policy.InboundRules, ipVersion)
+			if len(rules) == 0 {
+				continue
+			}
+			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurInputChainPrefix, i, policy.Name))
 			inbound := generictables.Chain{
 				Name:  chainName,
-				Rules: r.rulesToTablesRules(policy.InboundRules, ipVersion),
+				Rules: rules,
 			}
 			chains = append(chains, &inbound)
 			rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
@@ -31,10 +35,14 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedPol
 		}
 
 		if len(policy.OutboundRules) > 0 {
-			chainName := generictables.OurOutputChainPrefix + fmt.Sprint(i)
+			rules := r.rulesToTablesRules(policy.OutboundRules, ipVersion)
+			if len(rules) == 0 {
+				continue
+			}
+			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurOutputChainPrefix, i, policy.Name))
 			outbound := generictables.Chain{
 				Name:  chainName,
-				Rules: r.rulesToTablesRules(policy.OutboundRules, ipVersion),
+				Rules: rules,
 			}
 			chains = append(chains, &outbound)
 			rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
@@ -233,28 +241,28 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 		srcIPSets []string
 		dstIPSets []string
 	)
-	if len(rule.SrcGNSNetNames) > 0 {
-		srcIPSets = rule.SrcGNSNetNames
+	if len(rule.SrcHEPUUIDs) > 0 || len(rule.SrcGNSUUIDs) > 0 {
+		srcIPSets = r.getIPSetsByUUIDs(append(rule.SrcHEPUUIDs, rule.SrcGNSUUIDs...))
 	}
-	if len(rule.DstGNSNetNames) > 0 {
-		dstIPSets = rule.DstGNSNetNames
+	if len(rule.DstHEPUUIDs) > 0 || len(rule.DstGNSUUIDs) > 0 {
+		dstIPSets = r.getIPSetsByUUIDs(append(rule.DstHEPUUIDs, rule.DstGNSUUIDs...))
 	}
 	var matchSets []generictables.MatchCriteria
 	if len(srcIPSets) > 0 || len(dstIPSets) > 0 {
 		if len(srcIPSets) > 0 && len(dstIPSets) > 0 {
 			for _, srcIP := range srcIPSets {
-				matchSet := r.NewMatch().SourceIPSet(ipset.IPSetNamePrefix + srcIP)
+				matchSet := r.NewMatch().SourceIPSet(srcIP)
 				for _, dstIP := range dstIPSets {
-					matchSets = append(matchSets, matchSet.Copy().DestIPSet(ipset.IPSetNamePrefix+dstIP))
+					matchSets = append(matchSets, matchSet.Copy().DestIPSet(dstIP))
 				}
 			}
 		} else if len(dstIPSets) > 0 {
 			for _, dstIP := range dstIPSets {
-				matchSets = append(matchSets, r.NewMatch().DestIPSet(ipset.IPSetNamePrefix+dstIP))
+				matchSets = append(matchSets, r.NewMatch().DestIPSet(dstIP))
 			}
 		} else {
 			for _, srcIP := range srcIPSets {
-				matchSets = append(matchSets, r.NewMatch().SourceIPSet(ipset.IPSetNamePrefix+srcIP))
+				matchSets = append(matchSets, r.NewMatch().SourceIPSet(srcIP))
 			}
 		}
 	}
@@ -269,6 +277,18 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 	}
 
 	return rules
+}
+
+func (r *DefaultRuleRenderer) getIPSetsByUUIDs(uuids []string) []string {
+	var ipSets []string
+	for _, srcUUID := range uuids {
+		mainSetName, present := r.ipsetNameConvention.GetMainNameOfSetByUUID(srcUUID)
+		if !present {
+			continue
+		}
+		ipSets = append(ipSets, mainSetName)
+	}
+	return ipSets
 }
 
 func (r *DefaultRuleRenderer) cartesianMatches(arrayMatches ...[]generictables.MatchCriteria) []generictables.MatchCriteria {
@@ -350,6 +370,8 @@ func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Acti
 		return r.Drop()
 	case "log":
 		return r.Log(r.logPrefix)
+	case "pass":
+		return r.Return()
 	default:
 		return r.Allow()
 	}

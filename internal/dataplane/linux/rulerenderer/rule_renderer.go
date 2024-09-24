@@ -2,6 +2,7 @@ package rulerenderer
 
 import (
 	"github.com/bamboo-firewall/agent/pkg/generictables"
+	"github.com/bamboo-firewall/agent/pkg/ipset"
 	"github.com/bamboo-firewall/agent/pkg/iptables"
 )
 
@@ -10,10 +11,11 @@ type DefaultRuleRenderer struct {
 
 	logPrefix string
 
-	NewMatch func() generictables.MatchCriteria
+	NewMatch            func() generictables.MatchCriteria
+	ipsetNameConvention *ipset.NameConvention
 }
 
-func NewRenderer(logPrefix string) *DefaultRuleRenderer {
+func NewRenderer(logPrefix string, ipsetNameConvention *ipset.NameConvention) *DefaultRuleRenderer {
 	return &DefaultRuleRenderer{
 		logPrefix:     logPrefix,
 		ActionFactory: iptables.NewAction(),
@@ -21,5 +23,6 @@ func NewRenderer(logPrefix string) *DefaultRuleRenderer {
 		NewMatch: func() generictables.MatchCriteria {
 			return iptables.NewMatch()
 		},
+		ipsetNameConvention: ipsetNameConvention,
 	}
 }

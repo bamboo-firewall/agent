@@ -57,7 +57,10 @@ type RejectAction struct {
 }
 
 func (a RejectAction) ToParameter() string {
-	return fmt.Sprintf("-j REJECT --reject-with %s", a.with)
+	if a.with != "" {
+		return fmt.Sprintf("-j REJECT --reject-with %s", a.with)
+	}
+	return "-j REJECT"
 }
 
 func (a RejectAction) String() string {

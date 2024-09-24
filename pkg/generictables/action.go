@@ -5,6 +5,7 @@ type ActionFactory interface {
 	Allow() Action
 	Drop() Action
 	Log(prefix string) Action
+	Return() Action
 }
 
 type Action interface {

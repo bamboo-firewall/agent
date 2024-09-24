@@ -6,7 +6,7 @@ import (
 )
 
 type RuleRenderer interface {
-	PoliciesToIptablesChains(policies []*dto.ParsedPolicy, ipVersion int, apiServerIPV4 string) []*generictables.Chain
+	PoliciesToIptablesChains(policies []*dto.ParsedGNP, ipVersion int, apiServerIPV4 string) []*generictables.Chain
 }
 
 type policy struct {
@@ -28,8 +28,8 @@ func NewPolicy(filterTable generictables.Table, ipVersion int, apiServerIPV4 str
 
 func (p *policy) OnUpdate(msg interface{}) {
 	switch m := msg.(type) {
-	case *dto.FetchPoliciesOutput:
-		chains := p.ruleRenderer.PoliciesToIptablesChains(m.ParsedPolicies, p.ipVersion, p.apiServerIPV4)
+	case *dto.HostEndpointPolicy:
+		chains := p.ruleRenderer.PoliciesToIptablesChains(m.ParsedGNPs, p.ipVersion, p.apiServerIPV4)
 
 		p.filterTable.UpdateChains(chains)
 	}
