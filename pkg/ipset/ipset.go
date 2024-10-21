@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bamboo-firewall/agent/pkg/generictables"
+	"github.com/bamboo-firewall/agent/pkg/net"
 )
 
 const (
@@ -109,28 +110,36 @@ func (i *IPSet) Apply() {
 func (i *IPSet) apply() error {
 	buf := bytes.NewBuffer(nil)
 
+	cloneSetFromDataplane := make(map[string]map[string]struct{})
+	for k, vv := range i.setFromDataplane {
+		cloneSetFromDataplane[k] = make(map[string]struct{})
+		for v := range vv {
+			cloneSetFromDataplane[k][v] = struct{}{}
+		}
+	}
+
 	for name, members := range i.setFromDatastore {
 		// create ipset
-		if _, ok := i.setFromDataplane[name]; !ok {
+		if _, ok := cloneSetFromDataplane[name]; !ok {
 			buf.WriteString(fmt.Sprintf("create %s hash:net family %s\n", name, i.inetVersion))
 		}
 		// create new members for ipset
 		for member := range members {
-			if _, ok := i.setFromDataplane[name][member]; !ok {
+			if _, ok := cloneSetFromDataplane[name][member]; !ok {
 				buf.WriteString(fmt.Sprintf("add %s %s\n", name, member))
 			} else {
-				delete(i.setFromDataplane[name], member)
+				delete(cloneSetFromDataplane[name], member)
 			}
 		}
 		// del unused members
-		for member := range i.setFromDataplane[name] {
+		for member := range cloneSetFromDataplane[name] {
 			buf.WriteString(fmt.Sprintf("del %s %s\n", name, member))
 		}
 		// mark ipset done
-		delete(i.setFromDataplane, name)
+		delete(cloneSetFromDataplane, name)
 	}
 	// destroy unused ipset
-	for name := range i.setFromDataplane {
+	for name := range cloneSetFromDataplane {
 		buf.WriteString(fmt.Sprintf("destroy %s\n", name))
 	}
 	if buf.Len() == 0 {
@@ -227,7 +236,12 @@ func (i *IPSet) readIPSetFrom(r io.ReadCloser) (map[string]map[string]struct{}, 
 			if ipsets[captures[1]] == nil {
 				continue
 			}
-			ipsets[captures[1]][captures[2]] = struct{}{}
+			_, ipnet, err := net.ParseCIDROrIP(captures[2])
+			if err != nil {
+				slog.Warn("parse ip false", "ip", captures[2], "err", err)
+				continue
+			}
+			ipsets[captures[1]][ipnet.String()] = struct{}{}
 		}
 	}
 	if err := scanner.Err(); err != nil {
