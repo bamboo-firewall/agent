@@ -139,9 +139,9 @@ func (i *IPSet) apply() error {
 		delete(cloneSetFromDataplane, name)
 	}
 	// destroy unused ipset
-	for name := range cloneSetFromDataplane {
-		buf.WriteString(fmt.Sprintf("destroy %s\n", name))
-	}
+	//for name := range cloneSetFromDataplane {
+	//	buf.WriteString(fmt.Sprintf("destroy %s\n", name))
+	//}
 	if buf.Len() == 0 {
 		return nil
 	}
@@ -157,8 +157,8 @@ func (i *IPSet) execRestore(buf *bytes.Buffer) error {
 	cmd.Stdout = &outputBuf
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
-	if err != nil {
-		return err
+	if errBuf.Len() > 0 || err != nil {
+		return fmt.Errorf("restore failed. err: %s. %w", errBuf.String(), err)
 	}
 	return nil
 }
