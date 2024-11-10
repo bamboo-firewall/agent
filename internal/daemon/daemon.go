@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log"
 	"log/slog"
 	"os"
@@ -36,7 +37,8 @@ type dataplaneConnector struct {
 	dataplane                  dataplaneDriver
 	apiServer                  apiServer
 	hostEndpointPolicyMetadata *model.HostEndpointPolicyMetadata
-	hostName                   string
+	tenantID                   uint64
+	hostIP                     string
 	dataStoreRefreshInterval   time.Duration
 	ctx                        context.Context
 	ctxCancelFunc              context.CancelFunc
@@ -61,7 +63,7 @@ func Run(conf config.Config) {
 	connector := &dataplaneConnector{
 		dataplane:                dataplane,
 		apiServer:                as,
-		hostName:                 conf.HostName,
+		hostIP:                   conf.APIServerIPv4,
 		dataStoreRefreshInterval: datastoreRefreshInterval,
 		ctx:                      ctx,
 		ctxCancelFunc:            cancel,
@@ -101,6 +103,7 @@ func interruptHandle(dc *dataplaneConnector) {
 func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 	timer := time.NewTimer(dc.dataStoreRefreshInterval)
 	for {
+		slog.Debug("starting fetch policies to api-server")
 		var (
 			hostEndpointPolicy *dto.HostEndpointPolicy
 			err                error
@@ -108,19 +111,33 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 		utils.ResetTimer(timer, dc.dataStoreRefreshInterval)
 		select {
 		case <-timer.C:
-			hostEndpointPolicy, err = dc.apiServer.FetchHostEndpointPolicy(dc.ctx, dc.hostName)
-			if err != nil {
-				// ToDo: check connection or handle error need to retry or not
-				slog.Error("fetch host endpoint policies error:", "err", err)
-				continue
-			}
+			hostEndpointPolicy, err = dc.apiServer.FetchHostEndpointPolicy(dc.ctx, dc.hostIP)
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
+		if err != nil && !errors.Is(err, client.ErrNotFoundHEP) {
+			slog.Error("fetch host endpoint policies error:", "err", err)
+			continue
+		}
+
+		if errors.Is(err, client.ErrNotFoundHEP) {
+			// Not setup HEP
+			if dc.hostEndpointPolicyMetadata == nil {
+				slog.Error("not found host endpoint")
+				continue
+			}
+
+			// HEP is deleted
+			slog.Debug("host endpoint is deleted")
+			hostEndpointPolicy = new(dto.HostEndpointPolicy)
+			dc.hostEndpointPolicyMetadata = nil
+		}
+
 		if !dc.isNeedUpdatePolicy(hostEndpointPolicy.MetaData) {
 			continue
 		}
+		slog.Debug("need update policies")
 		dc.hostEndpointPolicyMetadata = &model.HostEndpointPolicyMetadata{
 			HEPVersions: hostEndpointPolicy.MetaData.HEPVersions,
 			GNPVersions: hostEndpointPolicy.MetaData.GNPVersions,
@@ -128,7 +145,7 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 		}
 
 		if err = dc.dataplane.SendMessage(hostEndpointPolicy); err != nil {
-			slog.Info("send message error:", "err", err)
+			slog.Error("send message error:", "err", err)
 		}
 	}
 }

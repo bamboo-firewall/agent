@@ -19,6 +19,12 @@ func main() {
 		slog.Warn("read config from file fail", "error", err)
 	}
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	var logLevel slog.Level
+	if cfg.Debug {
+		logLevel = slog.LevelDebug
+	} else {
+		logLevel = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
 	daemon.Run(cfg)
 }

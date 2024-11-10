@@ -164,7 +164,9 @@ func (dp *InternalDataplane) intervalUpdateDataplane() {
 			return
 		}
 		if dp.datastoreInSync && dp.dataplaneNeedsSync {
+			slog.Debug("start applying to dataplane")
 			dp.apply()
+			slog.Debug("finished applying to dataplane")
 		}
 	}
 }
@@ -215,6 +217,15 @@ func (dp *InternalDataplane) apply() {
 		}(table)
 	}
 	wgTable.Wait()
+
+	for _, set := range dp.ipsets {
+		wgIPSet.Add(1)
+		go func(set *ipset.IPSet) {
+			defer wgIPSet.Done()
+			set.CleanUnusedSet()
+		}(set)
+	}
+	wgIPSet.Wait()
 }
 
 func (dp *InternalDataplane) SendMessage(msg interface{}) error {

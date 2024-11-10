@@ -10,9 +10,9 @@ type Config struct {
 	APIServerAddress           string
 	APIServerIPv4              string
 	IPTablesLockSecondsTimeout int
-	HostName                   string
 	DatastoreRefreshInterval   time.Duration
 	DataplaneRefreshInterval   time.Duration
+	Debug                      bool
 }
 
 func New(path string) (Config, error) {
@@ -27,8 +27,8 @@ func New(path string) (Config, error) {
 		APIServerAddress:           viper.GetString("API_SERVER_ADDRESS"),
 		APIServerIPv4:              viper.GetString("API_SERVER_IPV4"),
 		IPTablesLockSecondsTimeout: viper.GetInt("IPTABLES_LOCK_SECONDS_TIMEOUT"),
-		HostName:                   viper.GetString("HOST_NAME"),
 		DatastoreRefreshInterval:   viper.GetDuration("DATASTORE_REFRESH_INTERVAL"),
 		DataplaneRefreshInterval:   viper.GetDuration("DATAPLANE_REFRESH_INTERVAL"),
+		Debug:                      viper.GetBool("DEBUG"),
 	}, nil
 }

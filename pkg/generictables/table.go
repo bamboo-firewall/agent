@@ -24,5 +24,6 @@ const (
 type Table interface {
 	SetDefaultRuleOfDefaultChain(chainName string, rule Rule)
 	UpdateChains(chains []*Chain)
+	NeedClean()
 	Apply()
 }

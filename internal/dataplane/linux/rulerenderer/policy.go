@@ -363,7 +363,7 @@ func splitPorts(ports []string) [][]string {
 }
 
 func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Action {
-	switch action {
+	switch strings.ToLower(action) {
 	case "allow":
 		return r.Allow()
 	case "deny":

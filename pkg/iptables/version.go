@@ -27,6 +27,12 @@ var (
 		minor: 4,
 		patch: 20,
 	}
+	// v1dot8dot3 version 1.8.3
+	v1dot8dot3 = version{
+		major: 1,
+		minor: 8,
+		patch: 3,
+	}
 )
 
 func (v version) isGTE(targetVersion version) bool {

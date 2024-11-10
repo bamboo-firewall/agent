@@ -3,11 +3,16 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
+	httpbase "github.com/bamboo-firewall/agent/pkg/http"
+	"github.com/bamboo-firewall/agent/pkg/http/ierror"
 )
+
+var ErrNotFoundHEP = errors.New("not found hep")
 
 func (c *apiServer) FetchHostEndpointPolicy(ctx context.Context, hostName string) (*dto.HostEndpointPolicy, error) {
 	res := c.client.NewRequest().
@@ -18,7 +23,17 @@ func (c *apiServer) FetchHostEndpointPolicy(ctx context.Context, hostName string
 		return nil, fmt.Errorf("failed to fetch policy for host endpoint: %w", res.Err)
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, response: %s", res.StatusCode, string(res.Body))
+		var ierr *ierror.Error
+		if err := json.Unmarshal(res.Body, &ierr); err != nil {
+			return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, response: %s", res.StatusCode, string(res.Body))
+		}
+		if ierr.Code == httpbase.ErrorCodeNotFound {
+			return nil, ErrNotFoundHEP
+		} else if ierr.Code == 0 {
+			return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, response: %s", res.StatusCode, string(res.Body))
+		} else {
+			return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, err: %w", res.StatusCode, ierr)
+		}
 	}
 
 	var output *dto.HostEndpointPolicy

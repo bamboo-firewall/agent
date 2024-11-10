@@ -34,6 +34,7 @@ var (
 type Table struct {
 	name              string
 	ipVersion         int
+	version           version
 	hasWait           bool
 	waitSupportSecond bool
 	lockSecondTimeout int
@@ -56,8 +57,8 @@ type Table struct {
 	// defaultOurRuleOfDefaultChain contain our rule in default chain
 	defaultOurRuleOfDefaultChain map[string]generictables.Rule
 
-	// needSyncToDataplane policy need to sync to dataplane
-	needSyncToDataplane bool
+	// needCleanToDataplane clean all our rules and chains
+	needCleanToDataplane bool
 	// inSyncWithDataplane get policy from dataplane done
 	inSyncWithDataplane bool
 
@@ -88,6 +89,7 @@ func NewTable(name string, hashPrefix string, opts ...option) (*Table, error) {
 		return nil, err
 	}
 	t.mode = mode
+	t.version = ipTableVersion
 	if ipTableVersion.isGTE(v1dot4dot20) {
 		t.hasWait = true
 	}
@@ -113,6 +115,9 @@ func NewTable(name string, hashPrefix string, opts ...option) (*Table, error) {
 	}
 	t.saveCmd = saveCmd
 
+	slog.Debug("iptables info", "version", t.version, "ipVersion", t.ipVersion,
+		"restore cmd", t.restoreCmd, "save cmd", saveCmd)
+
 	return t, nil
 }
 
@@ -133,7 +138,7 @@ func getIptablesRestoreOrSaveCmd(mode string, ipVersion int, restoreOrSave strin
 			slog.Warn("look path of command failed", "command", candidate, "err", err)
 		}
 	}
-	return "", fmt.Errorf("no iptables restore command found for mode %s and ip version %d", mode, ipVersion)
+	return "", fmt.Errorf("no iptables restore command found for mode %s and ipVersion %d", mode, ipVersion)
 }
 
 func (t *Table) SetDefaultRuleOfDefaultChain(chainName string, rule generictables.Rule) {
@@ -152,10 +157,11 @@ func (t *Table) UpdateChain(chain *generictables.Chain) {
 	t.chainNameToChain[chain.Name] = chain
 }
 
+func (t *Table) NeedClean() {
+	t.needCleanToDataplane = true
+}
+
 func (t *Table) Apply() {
-	if len(t.chainNameToChain) == 0 {
-		return
-	}
 	if !t.inSyncWithDataplane {
 		t.loadFromDataplane()
 	}
@@ -179,15 +185,35 @@ func (t *Table) Apply() {
 		break
 	}
 	t.inSyncWithDataplane = false
+	t.needCleanToDataplane = false
 }
 
 func (t *Table) apply() error {
-	buf := new(RestoreBuilder)
+	slog.Debug("start apply policy", "chainNameToChain", t.chainNameToChain, "chainHashesFromDataplane",
+		t.chainHashesFromDataplane, "ipVersion", t.ipVersion)
+	defer slog.Debug("finish apply policy", "ipVersion", t.ipVersion)
+	if t.needCleanToDataplane {
+		return t.Clean()
+	}
 
+	if len(t.chainNameToChain) == 0 {
+		return nil
+	}
+
+	buf := new(RestoreBuilder)
 	buf.StartTransaction(t.name)
 
 	updatedChains := make(map[string]struct{})
 	referenceChains := make(map[string]struct{})
+
+	// iptables-nft-restore <v1.8.3 has a bug (https://bugzilla.netfilter.org/show_bug.cgi?id=1348)
+	// where only the first replace command sets the rule index.  Work around that by refreshing the
+	// whole chain using a flush.
+	isIptablesCMDBug := false
+	if t.mode == modeNFT && t.version.isGTE(v1dot8dot3) {
+		isIptablesCMDBug = true
+	}
+
 	// First: write chain
 	for chainName, chain := range t.chainNameToChain {
 		currentHashes := t.renderer.RuleHashes(chain)
@@ -198,11 +224,23 @@ func (t *Table) apply() error {
 			updatedChains[chainName] = struct{}{}
 			continue
 		}
-		buf.WriteChain(chainName)
+
+		chainNeedToBeFlushed := false
+		if isIptablesCMDBug {
+			// flush all. Create new chain
+			chainNeedToBeFlushed = true
+		} else if len(previousHashes) == 0 {
+			// chain not exist in dataplane. Create new chain
+			chainNeedToBeFlushed = true
+		}
+
+		if chainNeedToBeFlushed {
+			buf.WriteChain(chainName)
+		}
 	}
 
 	// Second: write rule
-	// Step1: Write our rule to our chain(user-defined policy)
+	// Step 1: Write our rule to our chain(user-defined policy)
 	for chainName, chain := range t.chainNameToChain {
 		if _, ok := updatedChains[chainName]; ok {
 			continue
@@ -212,17 +250,27 @@ func (t *Table) apply() error {
 		}
 
 		var previousHashes []string
-		if t.mode == modeNFT {
-			previousHashes = nil
-		} else {
+		if !isIptablesCMDBug {
 			previousHashes = t.chainHashesFromDataplane[chainName]
 		}
 		currentHashes := t.renderer.RuleHashes(chain)
 		for i := 0; i < len(currentHashes) || i < len(previousHashes); i++ {
-			buf.WriteRule(t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i]))
+			var line string
+			if i < len(currentHashes) && i < len(previousHashes) {
+				if currentHashes[i] == previousHashes[i] {
+					continue
+				}
+				line = t.renderer.RenderReplace(&chain.Rules[i], chainName, i+1, currentHashes[i])
+			} else if i < len(previousHashes) {
+				// previousHashed was longer, remove the old rules from the end
+				line = t.renderer.RenderDeleteAtIndex(chainName, len(currentHashes)+1)
+			} else {
+				line = t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i])
+			}
+			buf.WriteRule(line)
 		}
 	}
-	// Step2: Write our rule to our default chain
+	// Step 2: Write our rule to our default chain
 	for chainName, chain := range t.chainNameToChain {
 		if _, ok := updatedChains[chainName]; ok {
 			continue
@@ -232,17 +280,30 @@ func (t *Table) apply() error {
 		}
 
 		var previousHashes []string
-		if t.mode == modeNFT {
-			previousHashes = nil
-		} else {
+		if !isIptablesCMDBug {
 			previousHashes = t.chainHashesFromDataplane[chainName]
 		}
 		currentHashes := t.renderer.RuleHashes(chain)
 		for i := 0; i < len(currentHashes) || i < len(previousHashes); i++ {
-			buf.WriteRule(t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i]))
+			var line string
+			if i < len(currentHashes) && i < len(previousHashes) {
+				if currentHashes[i] == previousHashes[i] {
+					continue
+				}
+				//line = t.renderer.RenderDeleteAtIndex(chainName, i+1)
+				//line = t.renderer.RenderInsertAtIndex(&chain.Rules[i], chainName, i+1, currentHashes[i])
+				line = t.renderer.RenderReplace(&chain.Rules[i], chainName, i+1, currentHashes[i])
+			} else if i < len(previousHashes) {
+				// previousHashed was longer, remove the old rules from the end
+				line = t.renderer.RenderDeleteAtIndex(chainName, i+1)
+			} else {
+				line = t.renderer.RenderAppend(&chain.Rules[i], chainName, currentHashes[i])
+			}
+			buf.WriteRule(line)
 		}
+
 	}
-	// Step3 : Write our rule of default chain
+	// Step 3: Write our rule of default chain
 	// Make sure one our rule of last of default chain
 	for chainName, defaultRule := range t.defaultOurRuleOfDefaultChain {
 		defaultHashes := t.renderer.RuleHashes(&generictables.Chain{
@@ -271,7 +332,7 @@ func (t *Table) apply() error {
 			}
 		}
 	}
-	// Step3: Delete all our unreferenced chain
+	// Step 4: Delete all our unreferenced chain
 	for chainName := range t.chainHashesFromDataplane {
 		if _, ok := referenceChains[chainName]; ok {
 			continue
@@ -293,7 +354,56 @@ func (t *Table) apply() error {
 	return nil
 }
 
+// Clean all our rules and chains
+func (t *Table) Clean() error {
+	slog.Debug("start clean policy", "chainHashesFromDataplane", t.chainHashesFromDataplane, "ipVersion", t.ipVersion)
+	defer slog.Debug("finish clean policy", "ipVersion", t.ipVersion)
+	buf := new(RestoreBuilder)
+	buf.StartTransaction(t.name)
+
+	// first: remove all our rule in default chain
+	for chainName := range t.defaultOurRuleOfDefaultChain {
+		hashes := t.chainHashesFromDataplane[chainName]
+		for i, hash := range hashes {
+			if hash != "" {
+				buf.WriteRule(t.renderer.RenderDelete(t.rawRulesOfDefaultChainFromDataplane[chainName][i]))
+			}
+		}
+	}
+
+	// second: delete default our chain
+	for chainName := range t.chainHashesFromDataplane {
+		if !(chainName == generictables.OurDefaultInputChain || chainName == generictables.OurDefaultOutputChain) {
+			continue
+		}
+
+		buf.WriteChain(chainName)
+		buf.WriteRule(fmt.Sprintf("--delete-chain %s", chainName))
+	}
+
+	// third: delete all our chains
+	for chainName := range t.chainHashesFromDataplane {
+		if chainName == generictables.OurDefaultInputChain || chainName == generictables.OurDefaultOutputChain {
+			continue
+		}
+
+		buf.WriteChain(chainName)
+		buf.WriteRule(fmt.Sprintf("--delete-chain %s", chainName))
+	}
+
+	buf.EndTransaction()
+	if buf.IsEmpty() {
+		slog.Info("No rule to clean", "table", t.name)
+	} else {
+		return t.execRestore(buf)
+	}
+
+	return nil
+}
+
 func (t *Table) execRestore(buf *RestoreBuilder) error {
+	slog.Debug("start exec restore", "ipVersion", t.ipVersion)
+	defer slog.Debug("finish exec restore", "ipVersion", t.ipVersion)
 	contentBytes := buf.buf.Next(buf.buf.Len())
 	args := []string{"--noflush", "--verbose"}
 	if t.hasWait {
@@ -318,17 +428,20 @@ func (t *Table) execRestore(buf *RestoreBuilder) error {
 
 	var outputBuf, errBuf bytes.Buffer
 	cmd := exec.Command(t.restoreCmd, args...)
+	slog.Debug("exec restore", "cmd", cmd.String(), "content", string(contentBytes), "ipVersion", t.ipVersion)
 	cmd.Stdin = bytes.NewReader(contentBytes)
 	cmd.Stdout = &outputBuf
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
 	if err != nil {
-		return err
+		slog.Error("restore fail", "cmd", cmd.String(), "input", string(contentBytes), "stdout", outputBuf.String(), "stderr", errBuf.String())
+		return fmt.Errorf("restore failed. stderr: %s . err: %w", errBuf.String(), err)
 	}
 	return nil
 }
 
 func (t *Table) loadFromDataplane() {
+	slog.Debug("start load from dataplane", "ipVersion", t.ipVersion)
 	hashes, rules, err := t.getHashesAndRulesFromDataplane()
 	if err != nil {
 		slog.Error("Get hashes and rules from Dataplane failed", "err", err)
@@ -337,6 +450,8 @@ func (t *Table) loadFromDataplane() {
 	t.chainHashesFromDataplane = hashes
 	t.rawRulesOfDefaultChainFromDataplane = rules
 	t.inSyncWithDataplane = true
+	slog.Debug("finish load from dataplane", "chainHashesFromDataplane", t.chainHashesFromDataplane,
+		"rawRulesOfDefaultChainFromDataplane", t.rawRulesOfDefaultChainFromDataplane, "ipVersion", t.ipVersion)
 }
 
 func (t *Table) getHashesAndRulesFromDataplane() (map[string][]string, map[string][]string, error) {
@@ -374,8 +489,6 @@ func (t *Table) attemptToGetHashesAndRulesFromDataplane() (map[string][]string, 
 	if err != nil {
 		if errKill := cmd.Process.Kill(); errKill != nil {
 			err = fmt.Errorf("scanner error: %w. then kill process error: %w", err, errKill)
-		} else {
-			err = fmt.Errorf("error scanner: %w", err)
 		}
 		return nil, nil, err
 	}
@@ -434,7 +547,7 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error scanner error: %w", err)
 	}
 
 	// Remove all chain has not rules of our
