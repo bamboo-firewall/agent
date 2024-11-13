@@ -2,6 +2,8 @@ package rulerenderer
 
 import (
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
@@ -121,11 +123,15 @@ func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion 
 	}
 
 	mainMatch := r.NewMatch()
-	if rule.Protocol != "" {
-		if rule.IsProtocolNegative {
-			mainMatch = mainMatch.NotProtocol(rule.Protocol)
+	if rule.Protocol != nil {
+		if checkProtocol(rule.Protocol) {
+			if rule.IsProtocolNegative {
+				mainMatch = mainMatch.NotProtocol(rule.Protocol)
+			} else {
+				mainMatch = mainMatch.Protocol(rule.Protocol)
+			}
 		} else {
-			mainMatch = mainMatch.Protocol(rule.Protocol)
+			slog.Warn("malformed protocol", "protocol", rule.Protocol)
 		}
 	}
 
@@ -373,6 +379,18 @@ func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Acti
 	case "pass":
 		return r.Return()
 	default:
-		return r.Allow()
+		return r.Drop()
+	}
+}
+
+func checkProtocol(protocol interface{}) bool {
+	switch protocol.(type) {
+	case string:
+		return slices.Contains([]string{dto.ProtocolTCP, dto.ProtocolUDP, dto.ProtocolICMP, dto.ProtocolSCTP, dto.ProtocolUDPLite}, strings.ToLower(protocol.(string)))
+	case float64:
+		protocolNum := uint8(protocol.(float64))
+		return protocolNum != 0
+	default:
+		return false
 	}
 }

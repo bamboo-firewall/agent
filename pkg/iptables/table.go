@@ -210,7 +210,7 @@ func (t *Table) apply() error {
 	// where only the first replace command sets the rule index.  Work around that by refreshing the
 	// whole chain using a flush.
 	isIptablesCMDBug := false
-	if t.mode == modeNFT && t.version.isGTE(v1dot8dot3) {
+	if t.mode == modeNFT && !t.version.isGTE(v1dot8dot3) {
 		isIptablesCMDBug = true
 	}
 
@@ -290,8 +290,6 @@ func (t *Table) apply() error {
 				if currentHashes[i] == previousHashes[i] {
 					continue
 				}
-				//line = t.renderer.RenderDeleteAtIndex(chainName, i+1)
-				//line = t.renderer.RenderInsertAtIndex(&chain.Rules[i], chainName, i+1, currentHashes[i])
 				line = t.renderer.RenderReplace(&chain.Rules[i], chainName, i+1, currentHashes[i])
 			} else if i < len(previousHashes) {
 				// previousHashed was longer, remove the old rules from the end
@@ -346,7 +344,7 @@ func (t *Table) apply() error {
 
 	buf.EndTransaction()
 	if buf.IsEmpty() {
-		slog.Info("No new rules applied", "table", t.name)
+		slog.Info("No new rules applied", "ipVersion", t.ipVersion)
 	} else {
 		return t.execRestore(buf)
 	}

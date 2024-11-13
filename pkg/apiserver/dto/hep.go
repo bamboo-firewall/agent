@@ -1,5 +1,13 @@
 package dto
 
+const (
+	ProtocolTCP     = "tcp"
+	ProtocolUDP     = "udp"
+	ProtocolICMP    = "icmp"
+	ProtocolSCTP    = "sctp"
+	ProtocolUDPLite = "udplite"
+)
+
 type HostEndpoint struct {
 	ID          string               `json:"id"`
 	UUID        string               `json:"uuid"`
@@ -49,22 +57,22 @@ type ParsedGNP struct {
 }
 
 type ParsedRule struct {
-	Action             string   `json:"action"`
-	IPVersion          int      `json:"ipVersion"`
-	Protocol           string   `json:"protocol"`
-	IsProtocolNegative bool     `json:"isProtocolNegative"`
-	SrcNets            []string `json:"srcNets"`
-	IsSrcNetNegative   bool     `json:"isSrcNetNegative"`
-	SrcGNSUUIDs        []string `json:"srcGNSUUIDs"`
-	SrcHEPUUIDs        []string `json:"srcHEPUUIDs"`
-	SrcPorts           []string `json:"srcPorts"`
-	IsSrcPortNegative  bool     `json:"isSrcPortNegative"`
-	DstNets            []string `json:"dstNets"`
-	IsDstNetNegative   bool     `json:"isDstNetNegative"`
-	DstGNSUUIDs        []string `json:"dstGNSUUIDs"`
-	DstHEPUUIDs        []string `json:"dstHEPUUIDs"`
-	DstPorts           []string `json:"dstPorts"`
-	IsDstPortNegative  bool     `json:"isDstPortNegative"`
+	Action             string      `json:"action"`
+	IPVersion          int         `json:"ipVersion"`
+	Protocol           interface{} `json:"protocol"`
+	IsProtocolNegative bool        `json:"isProtocolNegative"`
+	SrcNets            []string    `json:"srcNets"`
+	IsSrcNetNegative   bool        `json:"isSrcNetNegative"`
+	SrcGNSUUIDs        []string    `json:"srcGNSUUIDs"`
+	SrcHEPUUIDs        []string    `json:"srcHEPUUIDs"`
+	SrcPorts           []string    `json:"srcPorts"`
+	IsSrcPortNegative  bool        `json:"isSrcPortNegative"`
+	DstNets            []string    `json:"dstNets"`
+	IsDstNetNegative   bool        `json:"isDstNetNegative"`
+	DstGNSUUIDs        []string    `json:"dstGNSUUIDs"`
+	DstHEPUUIDs        []string    `json:"dstHEPUUIDs"`
+	DstPorts           []string    `json:"dstPorts"`
+	IsDstPortNegative  bool        `json:"isDstPortNegative"`
 }
 
 type ParsedHEP struct {

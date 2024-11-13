@@ -47,12 +47,12 @@ func (m matchBuilder) NotConntrackState(stateNames string) generictables.MatchCr
 	return append(m, fmt.Sprintf("-m conntrack ! --ctstate %s", stateNames))
 }
 
-func (m matchBuilder) Protocol(protocol string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("-p %s", protocol))
+func (m matchBuilder) Protocol(protocol interface{}) generictables.MatchCriteria {
+	return append(m, fmt.Sprintf("-p %v", protocol))
 }
 
-func (m matchBuilder) NotProtocol(protocol string) generictables.MatchCriteria {
-	return append(m, fmt.Sprintf("! -p %s", protocol))
+func (m matchBuilder) NotProtocol(protocol interface{}) generictables.MatchCriteria {
+	return append(m, fmt.Sprintf("! -p %v", protocol))
 }
 
 func (m matchBuilder) ProtocolNum(num uint8) generictables.MatchCriteria {

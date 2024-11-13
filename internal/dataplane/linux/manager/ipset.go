@@ -1,9 +1,12 @@
 package manager
 
 import (
+	"log/slog"
+
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
 	"github.com/bamboo-firewall/agent/pkg/generictables"
 	"github.com/bamboo-firewall/agent/pkg/ipset"
+	"github.com/bamboo-firewall/agent/pkg/net"
 )
 
 const (
@@ -47,7 +50,12 @@ func (i *IPSet) networkSetsToIPSets(parsedHEPs []*dto.ParsedHEP, parsedGNSs []*d
 
 		members := make(map[string]struct{})
 		for _, ip := range ips {
-			members[ip] = struct{}{}
+			_, ipnet, err := net.ParseCIDROrIP(ip)
+			if err != nil {
+				slog.Warn("malformed ip", "ip", ip)
+				continue
+			}
+			members[ipnet.String()] = struct{}{}
 		}
 
 		mainName := i.ipsetNameConvention.SetMainNameOfSet(parsedHEP.UUID, index, i.ipset.GetIPVersion(), sourceSetHEP, parsedHEP.Name)
@@ -59,9 +67,9 @@ func (i *IPSet) networkSetsToIPSets(parsedHEPs []*dto.ParsedHEP, parsedGNSs []*d
 	index = 0
 	for _, parsedGNS := range parsedGNSs {
 		var nets []string
-		if i.ipset.GetIPVersion() == generictables.IPFamily4 && len(parsedGNS.NetsV4) > 0 {
+		if i.ipset.GetIPVersion() == generictables.IPFamily4 {
 			nets = parsedGNS.NetsV4
-		} else if i.ipset.GetIPVersion() == generictables.IPFamily6 && len(parsedGNS.NetsV6) > 0 {
+		} else if i.ipset.GetIPVersion() == generictables.IPFamily6 {
 			nets = parsedGNS.NetsV6
 		} else {
 			continue

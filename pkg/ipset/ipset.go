@@ -79,10 +79,6 @@ func (i *IPSet) UpdateIPSet(ipset map[string]map[string]struct{}) {
 }
 
 func (i *IPSet) Apply() {
-	//if len(i.setFromDatastore) == 0 {
-	//	return
-	//}
-
 	if !i.inSyncWithDataplane {
 		i.loadFromDataplane()
 	}

@@ -24,8 +24,8 @@ type Rule struct {
 	Action      string       `json:"action"`
 	IPVersion   int          `json:"ipVersion"`
 	Metadata    RuleMetadata `json:"metadata"`
-	Protocol    string       `json:"protocol"`
-	NotProtocol string       `json:"notProtocol"`
+	Protocol    interface{}  `json:"protocol"`
+	NotProtocol interface{}  `json:"notProtocol"`
 	Source      *RuleEntity  `json:"source"`
 	Destination *RuleEntity  `json:"destination"`
 }
