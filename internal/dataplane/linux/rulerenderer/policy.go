@@ -118,7 +118,7 @@ func (r *DefaultRuleRenderer) rulesToTablesRules(rules []*dto.ParsedRule, ipVers
 }
 
 func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion int) []generictables.Rule {
-	if rule.IPVersion != ipVersion {
+	if rule.IPVersion != nil && *rule.IPVersion != ipVersion {
 		return nil
 	}
 
