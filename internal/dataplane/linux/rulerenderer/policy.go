@@ -20,38 +20,36 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedGNP
 	for i, policy := range policies {
 		if len(policy.InboundRules) > 0 {
 			rules := r.rulesToTablesRules(policy.InboundRules, ipVersion)
-			if len(rules) == 0 {
-				continue
+			if len(rules) > 0 {
+				chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurInputChainPrefix, i, policy.Name))
+				inbound := generictables.Chain{
+					Name:  chainName,
+					Rules: rules,
+				}
+				chains = append(chains, &inbound)
+				rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
+					Match:   r.NewMatch(),
+					Action:  r.Jump(chainName),
+					Comment: nil,
+				})
 			}
-			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurInputChainPrefix, i, policy.Name))
-			inbound := generictables.Chain{
-				Name:  chainName,
-				Rules: rules,
-			}
-			chains = append(chains, &inbound)
-			rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
-				Match:   r.NewMatch(),
-				Action:  r.Jump(chainName),
-				Comment: nil,
-			})
 		}
 
 		if len(policy.OutboundRules) > 0 {
 			rules := r.rulesToTablesRules(policy.OutboundRules, ipVersion)
-			if len(rules) == 0 {
-				continue
+			if len(rules) > 0 {
+				chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurOutputChainPrefix, i, policy.Name))
+				outbound := generictables.Chain{
+					Name:  chainName,
+					Rules: rules,
+				}
+				chains = append(chains, &outbound)
+				rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
+					Match:   r.NewMatch(),
+					Action:  r.Jump(chainName),
+					Comment: nil,
+				})
 			}
-			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurOutputChainPrefix, i, policy.Name))
-			outbound := generictables.Chain{
-				Name:  chainName,
-				Rules: rules,
-			}
-			chains = append(chains, &outbound)
-			rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
-				Match:   r.NewMatch(),
-				Action:  r.Jump(chainName),
-				Comment: nil,
-			})
 		}
 	}
 	ourDefaultInputRules := make([]generictables.Rule, 0)

@@ -369,7 +369,7 @@ func (t *Table) Clean() error {
 		}
 	}
 
-	// second: delete default our chain
+	// second: delete our default chains(default rule and reference to our chains)
 	for chainName := range t.chainHashesFromDataplane {
 		if !(chainName == generictables.OurDefaultInputChain || chainName == generictables.OurDefaultOutputChain) {
 			continue
