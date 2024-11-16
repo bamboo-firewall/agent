@@ -25,7 +25,7 @@ func (c *apiServer) FetchHostEndpointPolicy(ctx context.Context, tenantID uint64
 	if res.StatusCode != http.StatusOK {
 		var ierr *ierror.Error
 		if err := json.Unmarshal(res.Body, &ierr); err != nil {
-			return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, response: %s", res.StatusCode, string(res.Body))
+			return nil, fmt.Errorf("undefined err., status code: %d, response: %s. err: %w", res.StatusCode, string(res.Body), err)
 		}
 		if ierr.Code == 0 {
 			return nil, fmt.Errorf("unexpected status code when fetch new policy for host endpoint, status code: %d, response: %s", res.StatusCode, string(res.Body))
