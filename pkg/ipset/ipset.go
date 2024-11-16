@@ -28,6 +28,8 @@ type IPSet struct {
 	setFromDatastore map[string]map[string]struct{}
 	// setFromDataplane ipsets from dataplane
 	setFromDataplane map[string]map[string]struct{}
+	// unusedSet list of unused set
+	unusedSet map[string]struct{}
 
 	ourSetRegex    *regexp.Regexp
 	ourMemberRegex *regexp.Regexp
@@ -77,10 +79,6 @@ func (i *IPSet) UpdateIPSet(ipset map[string]map[string]struct{}) {
 }
 
 func (i *IPSet) Apply() {
-	if len(i.setFromDatastore) == 0 {
-		return
-	}
-
 	if !i.inSyncWithDataplane {
 		i.loadFromDataplane()
 	}
@@ -91,13 +89,13 @@ func (i *IPSet) Apply() {
 	for {
 		err := i.apply()
 		if err != nil {
-			slog.Warn("apply ipset failed. Retrying", "err", err)
+			slog.Warn("apply ipset failed. Retrying", "err", err, "inet", i.inetVersion)
 			if retries > 0 {
 				retries--
 				time.Sleep(retryDelay)
 				retryDelay *= 2
 			} else {
-				slog.Error("apply ipset fail after retry.", "err", err)
+				slog.Error("apply ipset fail after retry.", "err", err, "inet", i.inetVersion)
 				break
 			}
 			continue
@@ -108,6 +106,9 @@ func (i *IPSet) Apply() {
 }
 
 func (i *IPSet) apply() error {
+	slog.Debug("start applying ipset", "setFromDatastore", i.setFromDatastore,
+		"setFromDataplane", i.setFromDataplane, "inet", i.inetVersion)
+	defer slog.Debug("finish applying ipset", "inet", i.inetVersion)
 	buf := bytes.NewBuffer(nil)
 
 	cloneSetFromDataplane := make(map[string]map[string]struct{})
@@ -125,6 +126,9 @@ func (i *IPSet) apply() error {
 		}
 		// create new members for ipset
 		for member := range members {
+			if member == "" {
+				continue
+			}
 			if _, ok := cloneSetFromDataplane[name][member]; !ok {
 				buf.WriteString(fmt.Sprintf("add %s %s\n", name, member))
 			} else {
@@ -138,10 +142,50 @@ func (i *IPSet) apply() error {
 		// mark ipset done
 		delete(cloneSetFromDataplane, name)
 	}
-	// destroy unused ipset
-	//for name := range cloneSetFromDataplane {
-	//	buf.WriteString(fmt.Sprintf("destroy %s\n", name))
-	//}
+	// get unused ipset to remove later
+	i.unusedSet = make(map[string]struct{})
+	for name := range cloneSetFromDataplane {
+		i.unusedSet[name] = struct{}{}
+	}
+	if buf.Len() == 0 {
+		return nil
+	}
+	return i.execRestore(buf)
+}
+
+func (i *IPSet) CleanUnusedSet() {
+	if len(i.unusedSet) == 0 {
+		return
+	}
+
+	retries := 3
+	retryDelay := 100 * time.Millisecond
+
+	for {
+		err := i.cleanUnusedSet()
+		if err != nil {
+			slog.Warn("clean ipset failed. Retrying", "err", err, "inet", i.inetVersion)
+			if retries > 0 {
+				retries--
+				time.Sleep(retryDelay)
+				retryDelay *= 2
+			} else {
+				slog.Error("clean ipset fail after retry.", "err", err, "inet", i.inetVersion)
+				break
+			}
+			continue
+		}
+		break
+	}
+}
+
+func (i *IPSet) cleanUnusedSet() error {
+	slog.Debug("start cleaning unused set", "unusedSet", i.unusedSet, "inet", i.inetVersion)
+	defer slog.Debug("finish clean unused set", "inet", i.inetVersion)
+	buf := bytes.NewBuffer(nil)
+	for name := range i.unusedSet {
+		buf.WriteString(fmt.Sprintf("destroy %s\n", name))
+	}
 	if buf.Len() == 0 {
 		return nil
 	}
@@ -149,28 +193,33 @@ func (i *IPSet) apply() error {
 }
 
 func (i *IPSet) execRestore(buf *bytes.Buffer) error {
+	slog.Debug("start exec restore", "inet", i.inetVersion)
+	defer slog.Debug("finish exec restore", "inet", i.inetVersion)
 	contentBytes := buf.Next(buf.Len())
 
 	var outputBuf, errBuf bytes.Buffer
 	cmd := exec.Command(i.ipsetCmd, "restore")
+	slog.Debug("exec restore", "cmd", cmd.String(), "content", string(contentBytes), "inet", i.inetVersion)
 	cmd.Stdin = bytes.NewReader(contentBytes)
 	cmd.Stdout = &outputBuf
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
 	if errBuf.Len() > 0 || err != nil {
-		return fmt.Errorf("restore failed. err: %s. %w", errBuf.String(), err)
+		return fmt.Errorf("restore failed. stderr: %s. err: %w", errBuf.String(), err)
 	}
 	return nil
 }
 
 func (i *IPSet) loadFromDataplane() {
+	slog.Debug("start loading ipset from dataplane", "inet", i.inetVersion)
 	ipsets, err := i.getIPSetFromDataplane()
 	if err != nil {
-		slog.Error("Get ipsets from Dataplane failed", "err", err)
+		slog.Error("Get ipsets from Dataplane failed", "err", err, "inet", i.inetVersion)
 		return
 	}
 	i.setFromDataplane = ipsets
 	i.inSyncWithDataplane = true
+	slog.Debug("finish load ipset from dataplane", "ipset", i.setFromDataplane, "inet", i.inetVersion)
 }
 
 func (i *IPSet) getIPSetFromDataplane() (map[string]map[string]struct{}, error) {
@@ -180,7 +229,7 @@ func (i *IPSet) getIPSetFromDataplane() (map[string]map[string]struct{}, error) 
 	for {
 		ipsets, err := i.attemptToGetIPSetFromDataplane()
 		if err != nil {
-			slog.Warn("Get ipsets from Dataplane failed. Retrying", "err", err)
+			slog.Warn("Get ipsets from Dataplane failed. Retrying", "err", err, "inet", i.inetVersion)
 			if retries > 0 {
 				retries--
 				time.Sleep(retryDelay)
@@ -238,7 +287,7 @@ func (i *IPSet) readIPSetFrom(r io.ReadCloser) (map[string]map[string]struct{}, 
 			}
 			_, ipnet, err := net.ParseCIDROrIP(captures[2])
 			if err != nil {
-				slog.Warn("parse ip false", "ip", captures[2], "err", err)
+				slog.Warn("parse ip false", "ip", captures[2], "err", err, "inet", i.inetVersion)
 				continue
 			}
 			ipsets[captures[1]][ipnet.String()] = struct{}{}

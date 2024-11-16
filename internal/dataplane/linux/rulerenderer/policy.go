@@ -2,6 +2,8 @@ package rulerenderer
 
 import (
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/bamboo-firewall/agent/pkg/apiserver/dto"
@@ -18,38 +20,36 @@ func (r *DefaultRuleRenderer) PoliciesToIptablesChains(policies []*dto.ParsedGNP
 	for i, policy := range policies {
 		if len(policy.InboundRules) > 0 {
 			rules := r.rulesToTablesRules(policy.InboundRules, ipVersion)
-			if len(rules) == 0 {
-				continue
+			if len(rules) > 0 {
+				chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurInputChainPrefix, i, policy.Name))
+				inbound := generictables.Chain{
+					Name:  chainName,
+					Rules: rules,
+				}
+				chains = append(chains, &inbound)
+				rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
+					Match:   r.NewMatch(),
+					Action:  r.Jump(chainName),
+					Comment: nil,
+				})
 			}
-			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurInputChainPrefix, i, policy.Name))
-			inbound := generictables.Chain{
-				Name:  chainName,
-				Rules: rules,
-			}
-			chains = append(chains, &inbound)
-			rulesJumpToOurInputChain = append(rulesJumpToOurInputChain, generictables.Rule{
-				Match:   r.NewMatch(),
-				Action:  r.Jump(chainName),
-				Comment: nil,
-			})
 		}
 
 		if len(policy.OutboundRules) > 0 {
 			rules := r.rulesToTablesRules(policy.OutboundRules, ipVersion)
-			if len(rules) == 0 {
-				continue
+			if len(rules) > 0 {
+				chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurOutputChainPrefix, i, policy.Name))
+				outbound := generictables.Chain{
+					Name:  chainName,
+					Rules: rules,
+				}
+				chains = append(chains, &outbound)
+				rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
+					Match:   r.NewMatch(),
+					Action:  r.Jump(chainName),
+					Comment: nil,
+				})
 			}
-			chainName := iptables.GetMaxCustomChainName(fmt.Sprintf("%s%d-%s", generictables.OurOutputChainPrefix, i, policy.Name))
-			outbound := generictables.Chain{
-				Name:  chainName,
-				Rules: rules,
-			}
-			chains = append(chains, &outbound)
-			rulesJumpToOurOutputChain = append(rulesJumpToOurOutputChain, generictables.Rule{
-				Match:   r.NewMatch(),
-				Action:  r.Jump(chainName),
-				Comment: nil,
-			})
 		}
 	}
 	ourDefaultInputRules := make([]generictables.Rule, 0)
@@ -116,16 +116,20 @@ func (r *DefaultRuleRenderer) rulesToTablesRules(rules []*dto.ParsedRule, ipVers
 }
 
 func (r *DefaultRuleRenderer) ruleToTablesRules(rule *dto.ParsedRule, ipVersion int) []generictables.Rule {
-	if rule.IPVersion != ipVersion {
+	if rule.IPVersion != nil && *rule.IPVersion != ipVersion {
 		return nil
 	}
 
 	mainMatch := r.NewMatch()
-	if rule.Protocol != "" {
-		if rule.IsProtocolNegative {
-			mainMatch = mainMatch.NotProtocol(rule.Protocol)
+	if rule.Protocol != nil {
+		if checkProtocol(rule.Protocol) {
+			if rule.IsProtocolNegative {
+				mainMatch = mainMatch.NotProtocol(rule.Protocol)
+			} else {
+				mainMatch = mainMatch.Protocol(rule.Protocol)
+			}
 		} else {
-			mainMatch = mainMatch.Protocol(rule.Protocol)
+			slog.Warn("malformed protocol", "protocol", rule.Protocol)
 		}
 	}
 
@@ -363,7 +367,7 @@ func splitPorts(ports []string) [][]string {
 }
 
 func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Action {
-	switch action {
+	switch strings.ToLower(action) {
 	case "allow":
 		return r.Allow()
 	case "deny":
@@ -373,6 +377,18 @@ func (r *DefaultRuleRenderer) renderRuleAction(action string) generictables.Acti
 	case "pass":
 		return r.Return()
 	default:
-		return r.Allow()
+		return r.Drop()
+	}
+}
+
+func checkProtocol(protocol interface{}) bool {
+	switch protocol.(type) {
+	case string:
+		return slices.Contains([]string{dto.ProtocolTCP, dto.ProtocolUDP, dto.ProtocolICMP, dto.ProtocolSCTP, dto.ProtocolUDPLite}, strings.ToLower(protocol.(string)))
+	case float64:
+		protocolNum := uint8(protocol.(float64))
+		return protocolNum != 0
+	default:
+		return false
 	}
 }

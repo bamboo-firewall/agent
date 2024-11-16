@@ -29,7 +29,12 @@ func NewPolicy(filterTable generictables.Table, ipVersion int, apiServerIPV4 str
 func (p *policy) OnUpdate(msg interface{}) {
 	switch m := msg.(type) {
 	case *dto.HostEndpointPolicy:
-		chains := p.ruleRenderer.PoliciesToIptablesChains(m.ParsedGNPs, p.ipVersion, p.apiServerIPV4)
+		var chains []*generictables.Chain
+		if m.HEP == nil {
+			p.filterTable.NeedClean()
+		} else {
+			chains = p.ruleRenderer.PoliciesToIptablesChains(m.ParsedGNPs, p.ipVersion, p.apiServerIPV4)
+		}
 
 		p.filterTable.UpdateChains(chains)
 	}

@@ -5,6 +5,15 @@ import (
 	"fmt"
 )
 
+// RestoreBuilder build iptables data
+// example:
+/*
+*filter
+:TEST_CHAIN - [0:0]
+-A TEST_CHAIN -m comment --comment "test chain"
+-A TEST_CHAIN -j ACCEPT
+COMMIT
+*/
 type RestoreBuilder struct {
 	buf       bytes.Buffer
 	tableName string

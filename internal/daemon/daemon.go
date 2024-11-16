@@ -29,20 +29,25 @@ type dataplaneDriver interface {
 }
 
 type apiServer interface {
-	FetchHostEndpointPolicy(ctx context.Context, hostName string) (*dto.HostEndpointPolicy, error)
+	FetchHostEndpointPolicy(ctx context.Context, tenantID uint64, ip string) ([]*dto.HostEndpointPolicy, error)
 }
 
 type dataplaneConnector struct {
 	dataplane                  dataplaneDriver
 	apiServer                  apiServer
 	hostEndpointPolicyMetadata *model.HostEndpointPolicyMetadata
-	hostName                   string
+	tenantID                   uint64
+	hostIP                     string
 	dataStoreRefreshInterval   time.Duration
 	ctx                        context.Context
 	ctxCancelFunc              context.CancelFunc
 }
 
 func Run(conf config.Config) {
+	if conf.TenantID == 0 || conf.HostIP == "" {
+		log.Fatal("tenant_id and host_ip are required")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	dataplane, err := linux.NewInternalDataplane(ctx, conf)
 	if err != nil {
@@ -61,7 +66,8 @@ func Run(conf config.Config) {
 	connector := &dataplaneConnector{
 		dataplane:                dataplane,
 		apiServer:                as,
-		hostName:                 conf.HostName,
+		tenantID:                 conf.TenantID,
+		hostIP:                   conf.HostIP,
 		dataStoreRefreshInterval: datastoreRefreshInterval,
 		ctx:                      ctx,
 		ctxCancelFunc:            cancel,
@@ -102,33 +108,53 @@ func (dc *dataplaneConnector) sendMessageToDataplaneDriver() {
 	timer := time.NewTimer(dc.dataStoreRefreshInterval)
 	for {
 		var (
-			hostEndpointPolicy *dto.HostEndpointPolicy
-			err                error
+			hostEndpointPolicies []*dto.HostEndpointPolicy
+			err                  error
 		)
 		utils.ResetTimer(timer, dc.dataStoreRefreshInterval)
 		select {
 		case <-timer.C:
-			hostEndpointPolicy, err = dc.apiServer.FetchHostEndpointPolicy(dc.ctx, dc.hostName)
-			if err != nil {
-				// ToDo: check connection or handle error need to retry or not
-				slog.Error("fetch host endpoint policies error:", "err", err)
-				continue
-			}
+			slog.Debug("starting fetch policies to api-server")
+			hostEndpointPolicies, err = dc.apiServer.FetchHostEndpointPolicy(dc.ctx, dc.tenantID, dc.hostIP)
 		case <-dc.ctx.Done():
 			slog.Info("stop fetch agent")
 			return
 		}
-		if !dc.isNeedUpdatePolicy(hostEndpointPolicy.MetaData) {
+		if err != nil {
+			slog.Error("fetch host endpoint policies error:", "err", err)
 			continue
 		}
-		dc.hostEndpointPolicyMetadata = &model.HostEndpointPolicyMetadata{
-			HEPVersions: hostEndpointPolicy.MetaData.HEPVersions,
-			GNPVersions: hostEndpointPolicy.MetaData.GNPVersions,
-			GNSVersions: hostEndpointPolicy.MetaData.GNSVersions,
+
+		var hostEndpointPolicy *dto.HostEndpointPolicy
+		if len(hostEndpointPolicies) == 0 {
+			// Not setup HEP
+			if dc.hostEndpointPolicyMetadata == nil {
+				slog.Error("not found host endpoint")
+				continue
+			}
+
+			// HEP is deleted
+			slog.Debug("host endpoint is deleted")
+			hostEndpointPolicy = new(dto.HostEndpointPolicy)
+			dc.hostEndpointPolicyMetadata = nil
+		} else {
+			// current only one hep is supported
+			hostEndpointPolicy = hostEndpointPolicies[0]
+
+			if !dc.isNeedUpdatePolicy(hostEndpointPolicy.MetaData) {
+				continue
+			}
+
+			slog.Debug("need update policies")
+			dc.hostEndpointPolicyMetadata = &model.HostEndpointPolicyMetadata{
+				HEPVersions: hostEndpointPolicy.MetaData.HEPVersions,
+				GNPVersions: hostEndpointPolicy.MetaData.GNPVersions,
+				GNSVersions: hostEndpointPolicy.MetaData.GNSVersions,
+			}
 		}
 
 		if err = dc.dataplane.SendMessage(hostEndpointPolicy); err != nil {
-			slog.Info("send message error:", "err", err)
+			slog.Error("send message error:", "err", err)
 		}
 	}
 }

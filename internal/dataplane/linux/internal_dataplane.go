@@ -69,10 +69,6 @@ func NewInternalDataplane(parentCtx context.Context, conf config.Config) (*Inter
 	if err != nil {
 		return nil, fmt.Errorf("new ipset v4 failed: %w", err)
 	}
-	ipsetV6, err := ipset.NewIPSet(generictables.IPFamily6)
-	if err != nil {
-		return nil, fmt.Errorf("new ipset v6 failed: %w", err)
-	}
 
 	filerTableIPV4, err := iptables.NewTable(
 		generictables.TableFilter,
@@ -83,36 +79,49 @@ func NewInternalDataplane(parentCtx context.Context, conf config.Config) (*Inter
 	if err != nil {
 		return nil, fmt.Errorf("new iptables v4 failed: %w", err)
 	}
-	filterTableIPV6, err := iptables.NewTable(
-		generictables.TableFilter,
-		generictables.HashPrefix,
-		iptables.WithIPFamily(generictables.IPFamily6),
-		iptables.WithLockSecondsTimeout(conf.IPTablesLockSecondsTimeout),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("new iptables v6 failed: %w", err)
-	}
 
 	ipsetNameConventionV4 := ipset.NewNameConvention()
-	ipsetNameConventionV6 := ipset.NewNameConvention()
 
 	ruleRendererV4 := rulerenderer.NewRenderer(generictables.LogPrefix, ipsetNameConventionV4)
-	ruleRendererV6 := rulerenderer.NewRenderer(generictables.LogPrefix, ipsetNameConventionV6)
 
 	dp.ipsetManagers = append(dp.ipsetManagers,
 		manager.NewIPSet(ipsetV4, ipsetNameConventionV4),
-		manager.NewIPSet(ipsetV6, ipsetNameConventionV6),
 	)
 	dp.tableManagers = append(dp.tableManagers,
 		manager.NewPolicy(filerTableIPV4, generictables.IPFamily4, conf.APIServerIPv4, ruleRendererV4),
-		manager.NewPolicy(filterTableIPV6, generictables.IPFamily6, conf.APIServerIPv4, ruleRendererV6),
 	)
 
+	dp.ipsets = append(dp.ipsets, ipsetV4)
 	dp.filterTables = append(dp.filterTables,
 		filerTableIPV4,
-		filterTableIPV6,
 	)
-	dp.ipsets = append(dp.ipsets, ipsetV4, ipsetV6)
+
+	if conf.IPV6Support {
+		ipsetV6, err := ipset.NewIPSet(generictables.IPFamily6)
+		if err != nil {
+			return nil, fmt.Errorf("new ipset v6 failed: %w", err)
+		}
+
+		filterTableIPV6, err := iptables.NewTable(
+			generictables.TableFilter,
+			generictables.HashPrefix,
+			iptables.WithIPFamily(generictables.IPFamily6),
+			iptables.WithLockSecondsTimeout(conf.IPTablesLockSecondsTimeout),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("new iptables v6 failed: %w", err)
+		}
+
+		ipsetNameConventionV6 := ipset.NewNameConvention()
+
+		ruleRendererV6 := rulerenderer.NewRenderer(generictables.LogPrefix, ipsetNameConventionV6)
+
+		dp.ipsetManagers = append(dp.ipsetManagers, manager.NewIPSet(ipsetV6, ipsetNameConventionV6))
+		dp.tableManagers = append(dp.tableManagers,
+			manager.NewPolicy(filterTableIPV6, generictables.IPFamily6, conf.APIServerIPv4, ruleRendererV6))
+		dp.filterTables = append(dp.filterTables, filterTableIPV6)
+		dp.ipsets = append(dp.ipsets, ipsetV6)
+	}
 
 	dp.allTables = append(dp.allTables, dp.filterTables...)
 	return dp, nil
@@ -164,7 +173,9 @@ func (dp *InternalDataplane) intervalUpdateDataplane() {
 			return
 		}
 		if dp.datastoreInSync && dp.dataplaneNeedsSync {
+			slog.Debug("start applying to dataplane")
 			dp.apply()
+			slog.Debug("finished applying to dataplane")
 		}
 	}
 }
@@ -196,7 +207,7 @@ func (dp *InternalDataplane) processMsgToManager(msg interface{}) {
 func (dp *InternalDataplane) apply() {
 	dp.dataplaneNeedsSync = false
 
-	var wgIPSet sync.WaitGroup
+	var wgIPSet = sync.WaitGroup{}
 	for _, set := range dp.ipsets {
 		wgIPSet.Add(1)
 		go func(set *ipset.IPSet) {
@@ -215,6 +226,15 @@ func (dp *InternalDataplane) apply() {
 		}(table)
 	}
 	wgTable.Wait()
+
+	for _, set := range dp.ipsets {
+		wgIPSet.Add(1)
+		go func(set *ipset.IPSet) {
+			defer wgIPSet.Done()
+			set.CleanUnusedSet()
+		}(set)
+	}
+	wgIPSet.Wait()
 }
 
 func (dp *InternalDataplane) SendMessage(msg interface{}) error {

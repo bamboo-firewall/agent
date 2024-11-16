@@ -7,8 +7,8 @@ type MatchCriteria interface {
 	Copy() MatchCriteria
 	ConntrackState(stateNames string) MatchCriteria
 	NotConntrackState(stateNames string) MatchCriteria
-	Protocol(protocol string) MatchCriteria
-	NotProtocol(protocol string) MatchCriteria
+	Protocol(protocol interface{}) MatchCriteria
+	NotProtocol(protocol interface{}) MatchCriteria
 	ProtocolNum(num uint8) MatchCriteria
 	NotProtocolNum(num uint8) MatchCriteria
 	SourceNet(net string) MatchCriteria
