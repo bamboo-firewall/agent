@@ -385,6 +385,11 @@ func (t *Table) Clean() error {
 			continue
 		}
 
+		// ignore default chain
+		if _, ok := t.defaultOurRuleOfDefaultChain[chainName]; ok {
+			continue
+		}
+
 		buf.WriteChain(chainName)
 		buf.WriteRule(fmt.Sprintf("--delete-chain %s", chainName))
 	}
@@ -521,7 +526,6 @@ func (t *Table) readHashesAndRulesFrom(r io.ReadCloser) (map[string][]string, ma
 		// Look for lines of the form "-A chainName something", which are rules of the chain
 		captures = ruleAppendRegexp.FindSubmatch(line)
 		if captures == nil {
-			//slog.Debug("Not an append rule", "line", string(line))
 			continue
 		}
 		chainName := string(captures[1])
